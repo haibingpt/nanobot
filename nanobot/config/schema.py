@@ -60,6 +60,7 @@ class ProvidersConfig(Base):
     """Configuration for LLM providers."""
 
     custom: ProviderConfig = Field(default_factory=ProviderConfig)  # Any OpenAI-compatible endpoint
+    openrouter_custom: ProviderConfig = Field(default_factory=ProviderConfig)  # User-defined OpenRouter-compatible endpoint
     azure_openai: ProviderConfig = Field(default_factory=ProviderConfig)  # Azure OpenAI (model = deployment name)
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -125,6 +126,8 @@ class ExecToolConfig(Base):
     enable: bool = True
     timeout: int = 60
     path_append: str = ""
+    rtk_enabled: bool = False   # 开启后命令执行前通过 `rtk rewrite` 压缩，节省 60-90% token
+    rtk_verbose: bool = False   # 开启后将 rewrite 结果记录到 debug 日志
 
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
