@@ -15,6 +15,7 @@ from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryConsolidator
+from nanobot.agent.pruner import ContextPruner
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
@@ -67,8 +68,9 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
+        context_pruning_config=None,  # ContextPruningConfig | None
     ):
-        from nanobot.config.schema import ExecToolConfig, WebSearchConfig
+        from nanobot.config.schema import ContextPruningConfig, ExecToolConfig, WebSearchConfig
 
         self.bus = bus
         self.channels_config = channels_config
@@ -85,6 +87,8 @@ class AgentLoop:
         self.extra_allowed_paths = [Path(p).expanduser().resolve() for p in (extra_allowed_paths or [])]
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
+        _pruning_cfg = context_pruning_config or ContextPruningConfig()
+        self.pruner: ContextPruner | None = ContextPruner(_pruning_cfg) if _pruning_cfg.enabled else None
 
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
@@ -245,6 +249,12 @@ class AgentLoop:
             iteration += 1
 
             tool_defs = self.tools.get_definitions()
+
+            # transient context pruning（每次 LLM call 前轻量修剪 tool results）
+            if self.pruner:
+                messages = self.pruner.prune(
+                    messages, context_window_chars=self.context_window_tokens * 4
+                )
 
             if on_stream:
                 response = await self.provider.chat_stream_with_retry(
