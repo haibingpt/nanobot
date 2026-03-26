@@ -126,3 +126,34 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
     assert result.exit_code == 0
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["channels"]["qq"]["msgFormat"] == "plain"
+
+
+def test_context_pruning_config_defaults():
+    from nanobot.config.schema import ContextPruningConfig
+    cfg = ContextPruningConfig()
+    assert cfg.enabled is False
+    assert cfg.keep_last_assistants == 3
+    assert cfg.min_prunable_tool_chars == 50_000
+    assert cfg.soft_trim.max_chars == 4000
+    assert cfg.hard_clear.enabled is True
+
+
+def test_context_pruning_config_camel_case():
+    from nanobot.config.schema import ContextPruningConfig
+    cfg = ContextPruningConfig.model_validate({
+        "enabled": True,
+        "keepLastAssistants": 5,
+        "softTrim": {"maxChars": 2000, "headChars": 800, "tailChars": 800},
+        "hardClear": {"enabled": False},
+    })
+    assert cfg.enabled is True
+    assert cfg.keep_last_assistants == 5
+    assert cfg.soft_trim.max_chars == 2000
+    assert cfg.hard_clear.enabled is False
+
+
+def test_agent_defaults_has_context_pruning():
+    from nanobot.config.schema import AgentDefaults
+    defaults = AgentDefaults()
+    assert hasattr(defaults, "context_pruning")
+    assert defaults.context_pruning.enabled is False
