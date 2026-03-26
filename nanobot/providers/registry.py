@@ -83,6 +83,16 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         is_direct=True,
     ),
 
+    # === OpenRouter Custom (user-defined OpenRouter-compatible endpoint) ===
+    ProviderSpec(
+        name="openrouter_custom",
+        keywords=(),
+        env_key="",
+        display_name="OpenRouter Custom",
+        backend="openai_compat",
+        is_direct=True,
+    ),
+
     # === Azure OpenAI (direct API calls with API version 2024-10-21) =====
     ProviderSpec(
         name="azure_openai",
