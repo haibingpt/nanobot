@@ -16,7 +16,7 @@ from nanobot.utils.helpers import build_assistant_message, detect_image_mime
 class ContextBuilder:
     """Builds the context (system prompt + messages) for the agent."""
 
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
+    BOOTSTRAP_FILES = ["SOUL.md", "USER.md", "AGENTS.md", "TOOLS.md"]
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 
     def __init__(self, workspace: Path, timezone: str | None = None):
@@ -51,6 +51,13 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
 
 {skills_summary}""")
+
+        # Identity anchor: repeat SOUL.md at the end to exploit U-shaped
+        # attention (recency peak) and reinforce persona after the long
+        # skills block.
+        soul_anchor = self._load_soul_anchor()
+        if soul_anchor:
+            parts.append(f"# Remember\n\n{soul_anchor}")
 
         return "\n\n---\n\n".join(parts)
 
@@ -109,6 +116,13 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
+
+    def _load_soul_anchor(self) -> str | None:
+        """Load SOUL.md for end-of-prompt identity reinforcement."""
+        soul_path = self.workspace / "SOUL.md"
+        if soul_path.exists():
+            return soul_path.read_text(encoding="utf-8").strip()
+        return None
 
     def _load_bootstrap_files(self) -> str:
         """Load all bootstrap files from workspace."""
