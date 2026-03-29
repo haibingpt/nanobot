@@ -249,6 +249,20 @@ class DiscordChannel(BaseChannel):
             logger.error("Audio conversion error: {}", e)
             return None
 
+    @staticmethod
+    async def _get_audio_duration(file_path: Path) -> float:
+        """Get audio duration in seconds using ffprobe."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(file_path),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await proc.communicate()
+            return float(stdout.strip())
+        except Exception:
+            return 10.0  # fallback
+
     async def _send_voice_message(
         self, channel_url: str, headers: dict[str, str], ogg_path: Path,
         reply_to: str | None = None,
@@ -286,8 +300,8 @@ class DiscordChannel(BaseChannel):
             waveform_bytes = bytes([128] * 256)
             waveform_b64 = base64.b64encode(waveform_bytes).decode()
 
-            # Estimate duration (rough: ogg opus at ~64kbps)
-            duration_secs = max(1.0, file_size / 8000)
+            # Get actual duration
+            duration_secs = await self._get_audio_duration(ogg_path)
 
             payload: dict[str, Any] = {
                 "flags": VOICE_MESSAGE_FLAG,
