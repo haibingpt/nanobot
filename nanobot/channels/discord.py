@@ -339,6 +339,18 @@ class DiscordChannel(BaseChannel):
                 resp.raise_for_status()
                 file_path.write_bytes(resp.content)
                 media_paths.append(str(file_path))
+
+                # Transcribe audio attachments (voice messages, audio files)
+                content_type = attachment.get("content_type") or ""
+                if content_type.startswith("audio/") or filename.endswith(
+                    (".ogg", ".mp3", ".wav", ".m4a", ".flac", ".webm")
+                ):
+                    transcription = await self.transcribe_audio(file_path)
+                    if transcription:
+                        logger.info("Transcribed audio: {}...", transcription[:50])
+                        content_parts.append(f"[transcription: {transcription}]")
+                        continue
+
                 content_parts.append(f"[attachment: {file_path}]")
             except Exception as e:
                 logger.warning("Failed to download Discord attachment: {}", e)
