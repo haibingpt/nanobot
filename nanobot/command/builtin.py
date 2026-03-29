@@ -303,6 +303,26 @@ async def cmd_dream_restore(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+async def cmd_tts(ctx: CommandContext) -> OutboundMessage:
+    """Toggle TTS for the current session."""
+    args = ctx.args.strip().lower()
+    session = ctx.session or ctx.loop.sessions.get_or_create(ctx.key)
+
+    if args == "on":
+        session.metadata["tts"] = True
+        ctx.loop.sessions.save(session)
+        content = "🔊 TTS enabled for this session."
+    elif args == "off":
+        session.metadata.pop("tts", None)
+        ctx.loop.sessions.save(session)
+        content = "🔇 TTS disabled for this session."
+    else:
+        current = session.metadata.get("tts", False)
+        content = f"🔊 TTS is **{'on' if current else 'off'}**. Use `/tts on` or `/tts off` to toggle."
+
+    return OutboundMessage(channel=ctx.msg.channel, chat_id=ctx.msg.chat_id, content=content)
+
+
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     """Return available slash commands."""
     return OutboundMessage(
@@ -321,9 +341,11 @@ def build_help_text() -> str:
         "/stop — Stop the current task",
         "/restart — Restart the bot",
         "/status — Show bot status",
+<<<<<<< HEAD
         "/dream — Manually trigger Dream consolidation",
         "/dream-log — Show what the last Dream changed",
         "/dream-restore — Revert memory to a previous state",
+        "/tts — Toggle text-to-speech (on/off)",
         "/help — Show available commands",
     ]
     return "\n".join(lines)
@@ -336,9 +358,12 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/status", cmd_status)
     router.exact("/new", cmd_new)
     router.exact("/status", cmd_status)
+<<<<<<< HEAD
     router.exact("/dream", cmd_dream)
     router.exact("/dream-log", cmd_dream_log)
     router.prefix("/dream-log ", cmd_dream_log)
     router.exact("/dream-restore", cmd_dream_restore)
     router.prefix("/dream-restore ", cmd_dream_restore)
+    router.prefix("/tts ", cmd_tts)
+    router.exact("/tts", cmd_tts)
     router.exact("/help", cmd_help)
