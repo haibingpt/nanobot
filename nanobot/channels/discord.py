@@ -102,19 +102,15 @@ class DiscordChannel(BaseChannel):
             logger.warning("Discord HTTP client not initialized")
             return
 
-        # TTS: generate audio and send as voice message (skip text)
+        # TTS: generate audio and attach as MP3
         if self._tts_service and msg.content and not msg.metadata.get("_progress"):
             session_tts = msg.metadata.get("_session_tts", False)
             if self._tts_service.should_trigger(session_tts=session_tts):
                 audio_path = await self._tts_service.synthesize(msg.content)
                 if audio_path:
-                    ogg_path = await self._convert_to_ogg(audio_path)
-                    if ogg_path:
-                        url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
-                        headers = {"Authorization": f"Bot {self.config.token}"}
-                        await self._send_voice_message(url, headers, ogg_path, reply_to=msg.reply_to)
-                        await self._stop_typing(msg.chat_id)
-                        return  # Voice message sent, skip text
+                    if not msg.media:
+                        msg.media = []
+                    msg.media.insert(0, str(audio_path))  # Audio first, then text
 
         url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
         headers = {"Authorization": f"Bot {self.config.token}"}
