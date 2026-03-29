@@ -268,7 +268,9 @@ class AgentLoop:
             for tc in tool_calls:
                 args_str = json.dumps(tc.arguments, ensure_ascii=False)
                 logger.info("Tool call: {}({})", tc.name, args_str[:200])
-            self._set_tool_context(channel, chat_id, message_id)
+            # Preserve session_metadata already set by _process_message
+            existing_meta = getattr(self.tools.get("message"), "_session_metadata", None)
+            self._set_tool_context(channel, chat_id, message_id, session_metadata=existing_meta)
 
         result = await self.runner.run(AgentRunSpec(
             initial_messages=initial_messages,
