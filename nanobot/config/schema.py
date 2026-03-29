@@ -178,6 +178,15 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class TTSConfig(Base):
+    """Text-to-Speech configuration."""
+
+    enabled: bool = False
+    provider: str = "edge"
+    voice: str = "zh-CN-XiaoxiaoNeural"
+    max_text_length: int = 2000
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -186,6 +195,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    tts: TTSConfig = Field(default_factory=TTSConfig)
 
     @property
     def workspace_path(self) -> Path:
