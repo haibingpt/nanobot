@@ -11,6 +11,7 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Config
+from nanobot.tts.service import TTSService
 
 # Retry delays for message sending (exponential backoff: 1s, 2s, 4s)
 _SEND_RETRY_DELAYS = (1, 2, 4)
@@ -52,7 +53,17 @@ class ChannelManager:
             if not enabled:
                 continue
             try:
-                channel = cls(section, self.bus)
+                # Inject TTS service for channels that support it
+                kwargs: dict = {}
+                if name == "discord" and self.config.tts.enabled:
+                    try:
+                        tts_svc = TTSService(self.config.tts)
+                        kwargs["tts_service"] = tts_svc
+                        logger.info("TTS service enabled for {}", name)
+                    except Exception as e:
+                        logger.warning("TTS service init failed: {}", e)
+
+                channel = cls(section, self.bus, **kwargs)
                 channel.transcription_api_key = groq_key
                 self.channels[name] = channel
                 logger.info("{} channel enabled", cls.display_name)

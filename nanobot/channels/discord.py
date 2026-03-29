@@ -15,6 +15,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.paths import get_media_dir
 from nanobot.config.schema import Base
+from nanobot.tts.service import TTSService
 from nanobot.utils.helpers import split_message
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -43,11 +44,12 @@ class DiscordChannel(BaseChannel):
     def default_config(cls) -> dict[str, Any]:
         return DiscordConfig().model_dump(by_alias=True)
 
-    def __init__(self, config: Any, bus: MessageBus):
+    def __init__(self, config: Any, bus: MessageBus, tts_service: TTSService | None = None):
         if isinstance(config, dict):
             config = DiscordConfig.model_validate(config)
         super().__init__(config, bus)
         self.config: DiscordConfig = config
+        self._tts_service = tts_service
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._seq: int | None = None
         self._heartbeat_task: asyncio.Task | None = None
@@ -99,6 +101,16 @@ class DiscordChannel(BaseChannel):
         if not self._http:
             logger.warning("Discord HTTP client not initialized")
             return
+
+        # TTS: generate audio if triggered
+        if self._tts_service and msg.content and not msg.metadata.get("_progress"):
+            session_tts = msg.metadata.get("_session_tts", False)
+            if self._tts_service.should_trigger(session_tts=session_tts):
+                audio_path = await self._tts_service.synthesize(msg.content)
+                if audio_path:
+                    if not msg.media:
+                        msg.media = []
+                    msg.media.append(str(audio_path))
 
         url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
         headers = {"Authorization": f"Bot {self.config.token}"}
