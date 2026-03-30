@@ -21,20 +21,16 @@ def _gen_tool_id() -> str:
 
 
 # Beta headers for OAuth tokens (sk-ant-oat...) from Claude Code subscriptions.
-# Context-1m beta is intentionally excluded: Anthropic rejects it with OAuth auth.
-# interleaved-thinking beta is not needed for adaptive-thinking models (opus-4-6, sonnet-4-6).
+# Only targeting opus-4-6 / sonnet-4-6+ which use adaptive thinking — no interleaved-thinking beta needed.
+# Context-1m beta excluded: Anthropic rejects it with OAuth auth.
 _OAUTH_TOKEN_PREFIX = "sk-ant-oat"
 _CLAUDE_CODE_VERSION = "2.1.75"
 
-# Models supporting adaptive thinking (no interleaved-thinking beta needed)
-_ADAPTIVE_THINKING_MODELS = ("opus-4-6", "opus-4.6", "sonnet-4-6", "sonnet-4.6")
-
-_OAUTH_BETAS_BASE = [
+_OAUTH_BETAS = [
     "claude-code-20250219",
     "oauth-2025-04-20",
     "fine-grained-tool-streaming-2025-05-14",
 ]
-_OAUTH_BETAS_LEGACY_THINKING = [*_OAUTH_BETAS_BASE, "interleaved-thinking-2025-05-14"]
 
 # Claude Code canonical tool names (for name normalization in OAuth mode)
 _CLAUDE_CODE_TOOLS = [
@@ -45,24 +41,12 @@ _CLAUDE_CODE_TOOLS = [
 ]
 _CC_TOOL_LOOKUP: dict[str, str] = {t.lower(): t for t in _CLAUDE_CODE_TOOLS}
 
-# Claude Code system prompt injected for all OAuth requests
+# Claude Code system prompt injected for all OAuth requests (required by Anthropic)
 _CLAUDE_CODE_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
 
 
 def _is_oauth_token(api_key: str | None) -> bool:
     return bool(api_key and api_key.strip().startswith(_OAUTH_TOKEN_PREFIX))
-
-
-def _is_adaptive_thinking_model(model_id: str) -> bool:
-    lower = model_id.lower()
-    return any(tag in lower for tag in _ADAPTIVE_THINKING_MODELS)
-
-
-def _resolve_oauth_betas(model_id: str) -> list[str]:
-    """Return the correct beta list for an OAuth token request."""
-    if _is_adaptive_thinking_model(model_id):
-        return _OAUTH_BETAS_BASE
-    return _OAUTH_BETAS_LEGACY_THINKING
 
 
 def _to_claude_code_name(name: str) -> str:
@@ -423,11 +407,10 @@ class AnthropicProvider(LLMProvider):
             if tc:
                 kwargs["tool_choice"] = tc
 
-        # Inject model-dependent OAuth beta headers per-request
+        # Inject OAuth beta headers per-request
         request_headers = dict(self.extra_headers)
         if self._is_oauth:
-            oauth_betas = _resolve_oauth_betas(model_name)
-            request_headers = _merge_beta_header(request_headers, oauth_betas)
+            request_headers = _merge_beta_header(request_headers, _OAUTH_BETAS)
 
         if request_headers:
             kwargs["extra_headers"] = request_headers
