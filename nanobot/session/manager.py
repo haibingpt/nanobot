@@ -95,6 +95,7 @@ class Session:
     def clear(self) -> None:
         """Clear all messages and reset session to initial state."""
         self.messages = []
+        self.metadata = {}
         self.last_consolidated = 0
         self.updated_at = datetime.now()
 
