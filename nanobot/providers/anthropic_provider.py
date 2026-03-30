@@ -20,11 +20,36 @@ def _gen_tool_id() -> str:
     return "toolu_" + "".join(secrets.choice(_ALNUM) for _ in range(22))
 
 
+# Beta headers injected for OAuth tokens (sk-ant-oat...) from Claude Code subscriptions.
+# Context-1m beta is intentionally excluded: Anthropic rejects it with OAuth auth.
+_OAUTH_TOKEN_PREFIX = "sk-ant-oat"
+_OAUTH_BETAS = [
+    "claude-code-20250219",
+    "oauth-2025-04-20",
+    "fine-grained-tool-streaming-2025-05-14",
+    "interleaved-thinking-2025-05-14",
+]
+
+
+def _is_oauth_token(api_key: str | None) -> bool:
+    return bool(api_key and api_key.strip().startswith(_OAUTH_TOKEN_PREFIX))
+
+
+def _merge_beta_header(headers: dict[str, str], betas: list[str]) -> dict[str, str]:
+    existing = headers.get("anthropic-beta", "")
+    existing_list = [b.strip() for b in existing.split(",") if b.strip()]
+    merged = list(dict.fromkeys(existing_list + betas))  # deduplicate, preserve order
+    return {**headers, "anthropic-beta": ",".join(merged)}
+
+
 class AnthropicProvider(LLMProvider):
     """LLM provider using the native Anthropic SDK for Claude models.
 
     Handles message format conversion (OpenAI → Anthropic Messages API),
     prompt caching, extended thinking, tool calls, and streaming.
+
+    When an OAuth token (sk-ant-oat...) is used (Claude Code subscription),
+    the required beta headers are injected automatically.
     """
 
     def __init__(
@@ -36,7 +61,14 @@ class AnthropicProvider(LLMProvider):
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
-        self.extra_headers = extra_headers or {}
+
+        # Normalize headers and inject OAuth betas when using a Claude Code token
+        merged_headers: dict[str, str] = dict(extra_headers or {})
+        if _is_oauth_token(api_key):
+            merged_headers = _merge_beta_header(merged_headers, _OAUTH_BETAS)
+            logger.debug("AnthropicProvider: OAuth token detected, injected Claude Code beta headers")
+
+        self.extra_headers = merged_headers
 
         from anthropic import AsyncAnthropic
 
@@ -45,8 +77,8 @@ class AnthropicProvider(LLMProvider):
             client_kw["api_key"] = api_key
         if api_base:
             client_kw["base_url"] = api_base
-        if extra_headers:
-            client_kw["default_headers"] = extra_headers
+        if self.extra_headers:
+            client_kw["default_headers"] = self.extra_headers
         self._client = AsyncAnthropic(**client_kw)
 
     @staticmethod

@@ -396,6 +396,16 @@ def _make_provider(config: Config):
             console.print("Set them in ~/.nanobot/config.json under providers.azure_openai section")
             console.print("Use the model field to specify the deployment name.")
             raise typer.Exit(1)
+    elif backend == "anthropic":
+        # Resolve key from config, then env vars (OAuth token takes precedence over API key)
+        _anthropic_key = (p.api_key if p else None) \
+            or os.environ.get("ANTHROPIC_OAUTH_TOKEN") \
+            or os.environ.get("ANTHROPIC_API_KEY")
+        if not _anthropic_key and not (spec and spec.is_oauth):
+            console.print("[red]Error: Anthropic requires api_key or ANTHROPIC_OAUTH_TOKEN env var.[/red]")
+            console.print("Set api_key in ~/.nanobot/config.json under providers.anthropic (or providers.anthropic_claude_code)")
+            console.print("Or set the ANTHROPIC_OAUTH_TOKEN environment variable.")
+            raise typer.Exit(1)
     elif backend == "openai_compat" and not model.startswith("bedrock/"):
         needs_key = not (p and p.api_key)
         exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
@@ -417,8 +427,12 @@ def _make_provider(config: Config):
         )
     elif backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
+        # Resolve API key: config → ANTHROPIC_OAUTH_TOKEN env → ANTHROPIC_API_KEY env
+        anthropic_key = (p.api_key if p else None) \
+            or os.environ.get("ANTHROPIC_OAUTH_TOKEN") \
+            or os.environ.get("ANTHROPIC_API_KEY")
         provider = AnthropicProvider(
-            api_key=p.api_key if p else None,
+            api_key=anthropic_key,
             api_base=config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
