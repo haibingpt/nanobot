@@ -558,6 +558,12 @@ def gateway(
     cron_store_path = config.workspace_path / "cron" / "jobs.json"
     cron = CronService(cron_store_path)
 
+    # LLM trace logging
+    hooks: list = []
+    if config.trace.enabled:
+        from nanobot.agent.trace import TraceHook
+        hooks.append(TraceHook(traces_dir=config.workspace_path / "traces"))
+
     # Create agent with cron service
     agent = AgentLoop(
         bus=bus,
@@ -577,6 +583,7 @@ def gateway(
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
         context_pruning_config=config.agents.defaults.context_pruning,
+        hooks=hooks,
     )
 
     # Set cron callback (needs agent)
@@ -766,6 +773,12 @@ def agent(
     else:
         logger.disable("nanobot")
 
+    # LLM trace logging
+    cli_hooks: list = []
+    if config.trace.enabled:
+        from nanobot.agent.trace import TraceHook
+        cli_hooks.append(TraceHook(traces_dir=config.workspace_path / "traces"))
+
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
@@ -783,6 +796,7 @@ def agent(
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
         context_pruning_config=config.agents.defaults.context_pruning,
+        hooks=cli_hooks,
     )
 
     # Shared reference for progress callbacks

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
+from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from nanobot.agent.memory import MemoryConsolidator
 from nanobot.agent.pruner import ContextPruner
 from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner
@@ -35,6 +36,113 @@ from nanobot.session.manager import Session, SessionManager
 if TYPE_CHECKING:
     from nanobot.config.schema import ChannelsConfig, ExecToolConfig, WebSearchConfig
     from nanobot.cron.service import CronService
+
+
+class _LoopHook(AgentHook):
+    """Core lifecycle hook for the main agent loop.
+
+    Handles streaming delta relay, progress reporting, tool-call logging,
+    and think-tag stripping for the built-in agent path.
+    """
+
+    def __init__(
+        self,
+        agent_loop: AgentLoop,
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+        on_stream: Callable[[str], Awaitable[None]] | None = None,
+        on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        *,
+        channel: str = "cli",
+        chat_id: str = "direct",
+        message_id: str | None = None,
+    ) -> None:
+        self._loop = agent_loop
+        self._on_progress = on_progress
+        self._on_stream = on_stream
+        self._on_stream_end = on_stream_end
+        self._channel = channel
+        self._chat_id = chat_id
+        self._message_id = message_id
+        self._stream_buf = ""
+
+    def wants_streaming(self) -> bool:
+        return self._on_stream is not None
+
+    async def on_stream(self, context: AgentHookContext, delta: str) -> None:
+        from nanobot.utils.helpers import strip_think
+
+        prev_clean = strip_think(self._stream_buf)
+        self._stream_buf += delta
+        new_clean = strip_think(self._stream_buf)
+        incremental = new_clean[len(prev_clean):]
+        if incremental and self._on_stream:
+            await self._on_stream(incremental)
+
+    async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
+        if self._on_stream_end:
+            await self._on_stream_end(resuming=resuming)
+        self._stream_buf = ""
+
+    async def before_execute_tools(self, context: AgentHookContext) -> None:
+        if self._on_progress:
+            if not self._on_stream:
+                thought = self._loop._strip_think(
+                    context.response.content if context.response else None
+                )
+                if thought:
+                    await self._on_progress(thought)
+            tool_hint = self._loop._strip_think(self._loop._tool_hint(context.tool_calls))
+            await self._on_progress(tool_hint, tool_hint=True)
+        for tc in context.tool_calls:
+            args_str = json.dumps(tc.arguments, ensure_ascii=False)
+            logger.info("Tool call: {}({})", tc.name, args_str[:200])
+        # Preserve session_metadata already set by _process_message
+        existing_meta = getattr(self._loop.tools.get("message"), "_session_metadata", None)
+        self._loop._set_tool_context(self._channel, self._chat_id, self._message_id, session_metadata=existing_meta)
+
+    def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
+        return self._loop._strip_think(content)
+
+
+class _LoopHookChain(AgentHook):
+    """Run the core loop hook first, then best-effort extra hooks.
+
+    This preserves the historical failure behavior of ``_LoopHook`` while still
+    letting user-supplied hooks opt into ``CompositeHook`` isolation.
+    """
+
+    __slots__ = ("_primary", "_extras")
+
+    def __init__(self, primary: AgentHook, extra_hooks: list[AgentHook]) -> None:
+        self._primary = primary
+        self._extras = CompositeHook(extra_hooks)
+
+    def wants_streaming(self) -> bool:
+        return self._primary.wants_streaming() or self._extras.wants_streaming()
+
+    async def before_iteration(self, context: AgentHookContext) -> None:
+        await self._primary.before_iteration(context)
+        await self._extras.before_iteration(context)
+
+    async def on_stream(self, context: AgentHookContext, delta: str) -> None:
+        await self._primary.on_stream(context, delta)
+        await self._extras.on_stream(context, delta)
+
+    async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
+        await self._primary.on_stream_end(context, resuming=resuming)
+        await self._extras.on_stream_end(context, resuming=resuming)
+
+    async def before_execute_tools(self, context: AgentHookContext) -> None:
+        await self._primary.before_execute_tools(context)
+        await self._extras.before_execute_tools(context)
+
+    async def after_iteration(self, context: AgentHookContext) -> None:
+        await self._primary.after_iteration(context)
+        await self._extras.after_iteration(context)
+
+    def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
+        content = self._primary.finalize_content(context, content)
+        return self._extras.finalize_content(context, content)
 
 
 class AgentLoop:
@@ -70,6 +178,7 @@ class AgentLoop:
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
         context_pruning_config=None,  # ContextPruningConfig | None
+        hooks: list[AgentHook] | None = None,
     ):
         from nanobot.config.schema import ContextPruningConfig, ExecToolConfig, WebSearchConfig
 
@@ -90,6 +199,7 @@ class AgentLoop:
         self._last_usage: dict[str, int] = {}
         _pruning_cfg = context_pruning_config or ContextPruningConfig()
         self.pruner: ContextPruner | None = ContextPruner(_pruning_cfg) if _pruning_cfg.enabled else None
+        self._extra_hooks: list[AgentHook] = hooks or []
 
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
@@ -233,55 +343,32 @@ class AgentLoop:
         ``resuming=True`` means tool calls follow (spinner should restart);
         ``resuming=False`` means this is the final response.
         """
-        # Wrap on_stream with stateful think-tag filter so downstream
-        # consumers (CLI, channels) never see <think> blocks.
-        _raw_stream = on_stream
-        _stream_buf = ""
+        loop_hook = _LoopHook(
+            self,
+            on_progress=on_progress,
+            on_stream=on_stream,
+            on_stream_end=on_stream_end,
+            channel=channel,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
+        # Route trace hooks to the correct session file
+        for h in self._extra_hooks:
+            if hasattr(h, "session_key"):
+                h.session_key = f"{channel}:{chat_id}"
 
-        async def _filtered_stream(delta: str) -> None:
-            nonlocal _stream_buf
-            from nanobot.utils.helpers import strip_think
-            prev_clean = strip_think(_stream_buf)
-            _stream_buf += delta
-            new_clean = strip_think(_stream_buf)
-            incremental = new_clean[len(prev_clean):]
-            if incremental and _raw_stream:
-                await _raw_stream(incremental)
-
-        async def _wrapped_stream_end(*, resuming: bool = False) -> None:
-            nonlocal _stream_buf
-            if on_stream_end:
-                await on_stream_end(resuming=resuming)
-            _stream_buf = ""
-
-        async def _handle_tool_calls(response) -> None:
-            if not on_progress:
-                return
-            if not on_stream:
-                thought = self._strip_think(response.content)
-                if thought:
-                    await on_progress(thought)
-            tool_hint = self._strip_think(self._tool_hint(response.tool_calls))
-            await on_progress(tool_hint, tool_hint=True)
-
-        async def _prepare_tools(tool_calls) -> None:
-            for tc in tool_calls:
-                args_str = json.dumps(tc.arguments, ensure_ascii=False)
-                logger.info("Tool call: {}({})", tc.name, args_str[:200])
-            # Preserve session_metadata already set by _process_message
-            existing_meta = getattr(self.tools.get("message"), "_session_metadata", None)
-            self._set_tool_context(channel, chat_id, message_id, session_metadata=existing_meta)
+        hook: AgentHook = (
+            _LoopHookChain(loop_hook, self._extra_hooks)
+            if self._extra_hooks
+            else loop_hook
+        )
 
         result = await self.runner.run(AgentRunSpec(
             initial_messages=initial_messages,
             tools=self.tools,
             model=self.model,
             max_iterations=self.max_iterations,
-            on_stream=_filtered_stream if on_stream else None,
-            on_stream_end=_wrapped_stream_end if on_stream else None,
-            on_tool_calls=_handle_tool_calls,
-            before_execute_tools=_prepare_tools,
-            finalize_content=self._strip_think,
+            hook=hook,
             error_message="Sorry, I encountered an error calling the AI model.",
             concurrent_tools=True,
             pruner=self.pruner,
