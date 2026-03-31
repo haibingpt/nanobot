@@ -1,3 +1,0 @@
-{"_type": "metadata", "key": "cli:test", "created_at": "2026-03-31T15:33:42.240667", "updated_at": "2026-03-31T15:33:42.243907", "metadata": {"runtime": {"model": "test-model", "context_window": 200, "channel": "cli", "chat_id": "direct", "channel_name": null}}, "last_consolidated": 0}
-{"role": "user", "content": "hello", "sender_id": "user", "timestamp": "2026-03-31T15:33:42.243893"}
-{"role": "assistant", "content": "ok", "model": "test-model", "usage": {"prompt_tokens": 0, "completion_tokens": 0}, "timestamp": "2026-03-31T15:33:42.243904"}

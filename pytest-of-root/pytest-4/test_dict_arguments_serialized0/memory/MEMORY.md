@@ -1,1 +1,0 @@
-{"facts": ["User likes testing"], "topics": ["testing"]}
