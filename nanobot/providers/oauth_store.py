@@ -21,16 +21,19 @@ _DEFAULT_STORE_PATH = Path.home() / ".nanobot" / "oauth_credentials.json"
 _DEFAULT_CLI_CREDS_PATH = Path.home() / ".claude" / ".credentials.json"
 
 
+TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000  # refresh 5 min before actual expiry
+
+
 @dataclass
 class OAuthCredentials:
     access_token: str
     refresh_token: str
     expires_at_ms: int  # Unix timestamp in milliseconds
 
-    def is_expired(self, margin_ms: int = 5 * 60 * 1000) -> bool:
-        """Return True if the token is expired or will expire within margin_ms."""
+    def is_expired(self) -> bool:
+        """Return True if the token is expired or will expire within the refresh margin."""
         now_ms = int(time.time() * 1000)
-        return now_ms >= self.expires_at_ms - margin_ms
+        return now_ms >= self.expires_at_ms - TOKEN_REFRESH_MARGIN_MS
 
 
 class OAuthCredentialStore:

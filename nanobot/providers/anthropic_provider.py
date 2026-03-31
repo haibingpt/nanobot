@@ -133,15 +133,16 @@ class AnthropicProvider(LLMProvider):
         if not self._is_oauth or not self._credential_store:
             return
 
+        # Fast path: check stored expiry without lock or disk I/O
+        from nanobot.providers.oauth_store import TOKEN_REFRESH_MARGIN_MS
         now_ms = int(time.time() * 1000)
-        margin_ms = 5 * 60 * 1000
-        if now_ms < self._token_expires_at_ms - margin_ms:
-            return  # token still valid, fast path (no lock needed)
+        if now_ms < self._token_expires_at_ms - TOKEN_REFRESH_MARGIN_MS:
+            return
 
         async with self._refresh_lock:
             # Re-check after acquiring lock (another coroutine may have refreshed already)
             now_ms = int(time.time() * 1000)
-            if now_ms < self._token_expires_at_ms - margin_ms:
+            if now_ms < self._token_expires_at_ms - TOKEN_REFRESH_MARGIN_MS:
                 return
 
             creds = self._credential_store.load()
