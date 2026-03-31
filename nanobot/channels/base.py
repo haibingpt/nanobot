@@ -23,6 +23,7 @@ class BaseChannel(ABC):
     name: str = "base"
     display_name: str = "Base"
     transcription_api_key: str = ""
+    supports_tts: bool = False
 
     def __init__(self, config: Any, bus: MessageBus):
         """
