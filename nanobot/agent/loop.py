@@ -26,7 +26,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.events import InboundMessage, OutboundMessage, TurnContext
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
@@ -420,64 +420,56 @@ class AgentLoop:
         if msg.channel == "system":
             channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id
                                 else ("cli", msg.chat_id))
-            logger.info("Processing system message from {}", msg.sender_id)
-            key = f"{channel}:{chat_id}"
-            session = self.sessions.get_or_create(key)
-            session.metadata["runtime"] = {
-                "model": self.model,
-                "context_window": self.context_window_tokens,
-                "channel": channel,
-                "chat_id": chat_id,
-                "channel_name": msg.metadata.get("channel_name"),
-            }
-            await self.memory_consolidator.maybe_consolidate_by_tokens(session)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
-            history = session.get_history(max_messages=0)
-            current_role = "assistant" if msg.sender_id == "subagent" else "user"
-            messages = self.context.build_messages(
-                history=history,
-                current_message=msg.content, channel=channel, chat_id=chat_id,
-                current_role=current_role,
+            ctx = TurnContext(
+                channel=channel, chat_id=chat_id,
+                message_id=msg.metadata.get("message_id"),
                 channel_name=msg.metadata.get("channel_name"),
                 sender_name=msg.metadata.get("sender_name"),
+                sender_id=msg.sender_id,
+            )
+            logger.info("Processing system message from {}", ctx.sender_id)
+            key = f"{ctx.channel}:{ctx.chat_id}"
+            session = self.sessions.get_or_create(key)
+            self._update_runtime_metadata(session, ctx)
+            await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+            self._set_tool_context(ctx.channel, ctx.chat_id, ctx.message_id)
+            history = session.get_history(max_messages=0)
+            current_role = "assistant" if ctx.sender_id == "subagent" else "user"
+            messages = self.context.build_messages(
+                history=history,
+                current_message=msg.content, channel=ctx.channel, chat_id=ctx.chat_id,
+                current_role=current_role,
+                channel_name=ctx.channel_name,
+                sender_name=ctx.sender_name,
             )
             result = await self._run_agent_loop(
-                messages, channel=channel, chat_id=chat_id,
-                message_id=msg.metadata.get("message_id"),
+                messages, channel=ctx.channel, chat_id=ctx.chat_id,
+                message_id=ctx.message_id,
             )
-            self._save_turn(session, result, 1 + len(history),
-                            sender_id=msg.sender_id,
-                            sender_name=msg.metadata.get("sender_name"))
+            self._save_turn(session, result, 1 + len(history), ctx=ctx)
             self.sessions.save(session)
             self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
-            return OutboundMessage(channel=channel, chat_id=chat_id,
+            return OutboundMessage(channel=ctx.channel, chat_id=ctx.chat_id,
                                   content=result.final_content or "Background task completed.")
 
+        ctx = TurnContext.from_message(msg)
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
-        logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
+        logger.info("Processing message from {}:{}: {}", ctx.channel, ctx.sender_id, preview)
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
-
-        # Keep runtime context fresh on every turn
-        session.metadata["runtime"] = {
-            "model": self.model,
-            "context_window": self.context_window_tokens,
-            "channel": msg.channel,
-            "chat_id": msg.chat_id,
-            "channel_name": msg.metadata.get("channel_name"),
-        }
+        self._update_runtime_metadata(session, ctx)
 
         # Slash commands
         raw = msg.content.strip()
-        ctx = CommandContext(msg=msg, session=session, key=key, raw=raw, loop=self)
-        if result := await self.commands.dispatch(ctx):
+        cmd_ctx = CommandContext(msg=msg, session=session, key=key, raw=raw, loop=self)
+        if result := await self.commands.dispatch(cmd_ctx):
             return result
 
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
         self._set_tool_context(
-            msg.channel, msg.chat_id, msg.metadata.get("message_id"),
+            ctx.channel, ctx.chat_id, ctx.message_id,
             session_metadata=session.metadata,
         )
         if message_tool := self.tools.get("message"):
@@ -489,9 +481,9 @@ class AgentLoop:
             history=history,
             current_message=msg.content,
             media=msg.media if msg.media else None,
-            channel=msg.channel, chat_id=msg.chat_id,
-            channel_name=msg.metadata.get("channel_name"),
-            sender_name=msg.metadata.get("sender_name"),
+            channel=ctx.channel, chat_id=ctx.chat_id,
+            channel_name=ctx.channel_name,
+            sender_name=ctx.sender_name,
         )
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
@@ -499,7 +491,7 @@ class AgentLoop:
             meta["_progress"] = True
             meta["_tool_hint"] = tool_hint
             await self.bus.publish_outbound(OutboundMessage(
-                channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
+                channel=ctx.channel, chat_id=ctx.chat_id, content=content, metadata=meta,
             ))
 
         result = await self._run_agent_loop(
@@ -507,17 +499,15 @@ class AgentLoop:
             on_progress=on_progress or _bus_progress,
             on_stream=on_stream,
             on_stream_end=on_stream_end,
-            channel=msg.channel, chat_id=msg.chat_id,
-            message_id=msg.metadata.get("message_id"),
+            channel=ctx.channel, chat_id=ctx.chat_id,
+            message_id=ctx.message_id,
         )
 
         final_content = result.final_content
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
 
-        self._save_turn(session, result, 1 + len(history),
-                        sender_id=msg.sender_id,
-                        sender_name=msg.metadata.get("sender_name"))
+        self._save_turn(session, result, 1 + len(history), ctx=ctx)
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 
@@ -525,14 +515,14 @@ class AgentLoop:
             return None
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
+        logger.info("Response to {}:{}: {}", ctx.channel, ctx.sender_id, preview)
 
         meta = dict(msg.metadata or {})
         if on_stream is not None:
             meta["_streamed"] = True
         meta["_session_tts"] = session.metadata.get("tts", False)
         return OutboundMessage(
-            channel=msg.channel, chat_id=msg.chat_id, content=final_content,
+            channel=ctx.channel, chat_id=ctx.chat_id, content=final_content,
             metadata=meta,
         )
 
@@ -582,11 +572,22 @@ class AgentLoop:
 
         return filtered
 
+    def _update_runtime_metadata(self, session: Session, ctx: TurnContext) -> None:
+        """Keep runtime context fresh on every turn."""
+        session.metadata["runtime"] = {
+            "model": self.model,
+            "context_window": self.context_window_tokens,
+            "channel": ctx.channel,
+            "chat_id": ctx.chat_id,
+            "channel_name": ctx.channel_name,
+        }
+
     def _save_turn(self, session: Session, result: AgentRunResult, skip: int,
-                   sender_id: str | None = None,
-                   sender_name: str | None = None) -> None:
+                   ctx: TurnContext | None = None) -> None:
         """Save new-turn messages into session, truncating large tool results."""
         from datetime import datetime
+        sender_id = ctx.sender_id if ctx else None
+        sender_name = ctx.sender_name if ctx else None
         new_msgs = result.messages[skip:]
         usage = result.usage
         # Find the last assistant message index to attach usage
