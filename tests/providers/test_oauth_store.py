@@ -13,7 +13,7 @@ def test_credentials_is_expired_when_past_expiry():
         refresh_token="sk-ant-ort01-xxx",
         expires_at_ms=int(time.time() * 1000) - 10_000,
     )
-    assert creds.is_expired(margin_ms=0)
+    assert creds.is_expired()
 
 
 def test_credentials_not_expired_when_future():
@@ -22,16 +22,17 @@ def test_credentials_not_expired_when_future():
         refresh_token="sk-ant-ort01-xxx",
         expires_at_ms=int(time.time() * 1000) + 3_600_000,
     )
-    assert not creds.is_expired(margin_ms=0)
+    assert not creds.is_expired()
 
 
 def test_credentials_expired_within_margin():
+    """Token expiring in 2 min should be considered expired (margin is 5 min)."""
     creds = OAuthCredentials(
         access_token="sk-ant-oat01-xxx",
         refresh_token="sk-ant-ort01-xxx",
         expires_at_ms=int(time.time() * 1000) + 2 * 60 * 1000,
     )
-    assert creds.is_expired(margin_ms=5 * 60 * 1000)
+    assert creds.is_expired()
 
 
 def test_store_save_and_load(tmp_path):
