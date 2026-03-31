@@ -176,22 +176,45 @@ def _make_provider(config: Any) -> Any:
 
 
 def _make_single_provider(config: Any, model: str) -> Any:
-    """Create a single LLM provider for the given model string."""
+    """Create a single LLM provider for the given model string.
+
+    Supports explicit provider prefix: "openrouter_custom/claude-sonnet-4" will
+    look up providers.openrouter_custom directly, bypassing keyword matching.
+    """
     from nanobot.providers.registry import find_by_name
 
-    provider_name = config.get_provider_name(model)
-    p = config.get_provider(model)
-    spec = find_by_name(provider_name) if provider_name else None
+    # 显式 provider prefix 匹配：model 前缀是 config field name 时直接使用
+    provider_name = None
+    p = None
+    spec = None
+    if "/" in model:
+        prefix = model.split("/", 1)[0].replace("-", "_")
+        candidate = getattr(config.providers, prefix, None)
+        if candidate is not None and hasattr(candidate, "api_key"):
+            spec = find_by_name(prefix)
+            if candidate.api_key or (spec and (spec.is_oauth or spec.is_local or spec.is_direct)):
+                provider_name = prefix
+                p = candidate
+
+    # 回退到自动匹配
+    if not provider_name:
+        provider_name = config.get_provider_name(model)
+        p = config.get_provider(model)
+        spec = find_by_name(provider_name) if provider_name else None
+
     backend = spec.backend if spec else "openai_compat"
 
     if not p or (not p.api_key and not (spec and (spec.is_oauth or spec.is_local or spec.is_direct))):
         raise ValueError(f"No provider configured for fallback model '{model}'")
 
+    # api_base: 优先 provider config 的显式配置，回退到 registry 默认
+    api_base = p.api_base or config.get_api_base(model) or (spec.default_api_base if spec else None)
+
     if backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
         return AnthropicProvider(
             api_key=p.api_key,
-            api_base=config.get_api_base(model),
+            api_base=api_base,
             default_model=model,
             extra_headers=p.extra_headers,
         )
@@ -199,7 +222,7 @@ def _make_single_provider(config: Any, model: str) -> Any:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
         return OpenAICompatProvider(
             api_key=p.api_key,
-            api_base=config.get_api_base(model),
+            api_base=api_base,
             default_model=model,
             extra_headers=p.extra_headers,
             spec=spec,
