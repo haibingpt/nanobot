@@ -51,6 +51,17 @@ class OAuthCredentialStore:
             return creds
         return self._load_claude_cli()
 
+    def load_or_migrate(self) -> OAuthCredentials | None:
+        """Load credentials, migrating from Claude CLI if nanobot store is empty."""
+        creds = self.load()
+        if creds is not None:
+            return creds
+        cli_creds = self._load_claude_cli()
+        if cli_creds:
+            self.save(cli_creds)
+            logger.info("OAuth credentials migrated from Claude CLI to nanobot store")
+        return cli_creds
+
     def save(self, creds: OAuthCredentials) -> None:
         """Persist credentials to the nanobot store file."""
         self._store_path.parent.mkdir(parents=True, exist_ok=True)
