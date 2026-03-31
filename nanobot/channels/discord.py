@@ -56,6 +56,7 @@ class DiscordChannel(BaseChannel):
         self._typing_tasks: dict[str, asyncio.Task] = {}
         self._http: httpx.AsyncClient | None = None
         self._bot_user_id: str | None = None
+        self._channel_name_cache: dict[str, str] = {}  # channel_id -> name
 
     async def start(self) -> None:
         """Start the Discord gateway connection."""
@@ -361,18 +362,25 @@ class DiscordChannel(BaseChannel):
 
         reply_to = (payload.get("referenced_message") or {}).get("id")
 
+        # Resolve human-readable channel name (cached)
+        channel_name = await self._resolve_channel_name(channel_id)
+
         await self._start_typing(channel_id)
+
+        metadata: dict[str, Any] = {
+            "message_id": str(payload.get("id", "")),
+            "guild_id": guild_id,
+            "reply_to": reply_to,
+        }
+        if channel_name:
+            metadata["channel_name"] = channel_name
 
         await self._handle_message(
             sender_id=sender_id,
             chat_id=channel_id,
             content="\n".join(p for p in content_parts if p) or "[empty message]",
             media=media_paths,
-            metadata={
-                "message_id": str(payload.get("id", "")),
-                "guild_id": guild_id,
-                "reply_to": reply_to,
-            },
+            metadata=metadata,
         )
 
     def _should_respond_in_group(self, payload: dict[str, Any], content: str) -> bool:
@@ -395,6 +403,25 @@ class DiscordChannel(BaseChannel):
             return False
 
         return True
+
+    async def _resolve_channel_name(self, channel_id: str) -> str | None:
+        """Resolve channel_id to a human-readable name, with in-memory cache."""
+        if channel_id in self._channel_name_cache:
+            return self._channel_name_cache[channel_id]
+        if not self._http:
+            return None
+        try:
+            url = f"{DISCORD_API_BASE}/channels/{channel_id}"
+            headers = {"Authorization": f"Bot {self.config.token}"}
+            resp = await self._http.get(url, headers=headers)
+            resp.raise_for_status()
+            name = resp.json().get("name")
+            if name:
+                self._channel_name_cache[channel_id] = name
+            return name
+        except Exception as e:
+            logger.debug("Failed to resolve Discord channel name for {}: {}", channel_id, e)
+            return None
 
     async def _start_typing(self, channel_id: str) -> None:
         """Start periodic typing indicator for a channel."""
