@@ -431,6 +431,7 @@ class AgentLoop:
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
                 current_role=current_role,
+                channel_name=msg.metadata.get("channel_name"),
             )
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
@@ -470,6 +471,7 @@ class AgentLoop:
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
+            channel_name=msg.metadata.get("channel_name"),
         )
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
