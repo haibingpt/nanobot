@@ -167,4 +167,89 @@ def _make_provider(config: Any) -> Any:
         max_tokens=defaults.max_tokens,
         reasoning_effort=defaults.reasoning_effort,
     )
+
+    # 链式 fallback：primary 挂了自动降级
+    if defaults.fallback_models:
+        provider = _wrap_with_fallback(config, provider, defaults)
+
     return provider
+
+
+def _make_single_provider(config: Any, model: str) -> Any:
+    """Create a single LLM provider for the given model string.
+
+    Supports explicit provider prefix: "openrouter_custom/claude-sonnet-4" will
+    look up providers.openrouter_custom directly, bypassing keyword matching.
+    """
+    from nanobot.providers.registry import find_by_name
+
+    # 显式 provider prefix 匹配：model 前缀是 config field name 时直接使用
+    provider_name = None
+    p = None
+    spec = None
+    if "/" in model:
+        prefix = model.split("/", 1)[0].replace("-", "_")
+        candidate = getattr(config.providers, prefix, None)
+        if candidate is not None and hasattr(candidate, "api_key"):
+            spec = find_by_name(prefix)
+            if candidate.api_key or (spec and (spec.is_oauth or spec.is_local or spec.is_direct)):
+                provider_name = prefix
+                p = candidate
+
+    # 回退到自动匹配
+    if not provider_name:
+        provider_name = config.get_provider_name(model)
+        p = config.get_provider(model)
+        spec = find_by_name(provider_name) if provider_name else None
+
+    backend = spec.backend if spec else "openai_compat"
+
+    if not p or (not p.api_key and not (spec and (spec.is_oauth or spec.is_local or spec.is_direct))):
+        raise ValueError(f"No provider configured for fallback model '{model}'")
+
+    # api_base: 优先 provider config 的显式配置，回退到 registry 默认
+    api_base = p.api_base or config.get_api_base(model) or (spec.default_api_base if spec else None)
+
+    if backend == "anthropic":
+        from nanobot.providers.anthropic_provider import AnthropicProvider
+        return AnthropicProvider(
+            api_key=p.api_key,
+            api_base=api_base,
+            default_model=model,
+            extra_headers=p.extra_headers,
+        )
+    else:
+        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+        return OpenAICompatProvider(
+            api_key=p.api_key,
+            api_base=api_base,
+            default_model=model,
+            extra_headers=p.extra_headers,
+            spec=spec,
+        )
+
+
+def _wrap_with_fallback(config: Any, primary: Any, defaults: Any) -> Any:
+    """Wrap primary provider with FallbackProvider chain."""
+    from loguru import logger
+    from nanobot.providers.fallback import FallbackProvider
+
+    fallbacks = []
+    for fb_model in defaults.fallback_models:
+        try:
+            fb_provider = _make_single_provider(config, fb_model)
+        except Exception as e:
+            logger.warning("Skipping fallback model {}: {}", fb_model, e)
+            continue
+        fallbacks.append((fb_provider, fb_model))
+
+    if not fallbacks:
+        return primary
+
+    fb = FallbackProvider(
+        primary=primary,
+        fallbacks=fallbacks,
+        cooldown_s=defaults.fallback_cooldown_s,
+    )
+    fb.generation = primary.generation
+    return fb
