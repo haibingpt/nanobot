@@ -397,15 +397,8 @@ def _make_provider(config: Config):
             console.print("Use the model field to specify the deployment name.")
             raise typer.Exit(1)
     elif backend == "anthropic":
-        # Resolve key from config, then env vars (OAuth token takes precedence over API key)
-        _anthropic_key = (p.api_key if p else None) \
-            or os.environ.get("ANTHROPIC_OAUTH_TOKEN") \
-            or os.environ.get("ANTHROPIC_API_KEY")
-        if not _anthropic_key and not (spec and spec.is_oauth):
-            console.print("[red]Error: Anthropic requires api_key or ANTHROPIC_OAUTH_TOKEN env var.[/red]")
-            console.print("Set api_key in ~/.nanobot/config.json under providers.anthropic (or providers.anthropic_claude_code)")
-            console.print("Or set the ANTHROPIC_OAUTH_TOKEN environment variable.")
-            raise typer.Exit(1)
+        # Validation deferred to instantiation block (key resolution needs credential store)
+        pass
     elif backend == "openai_compat" and not model.startswith("bedrock/"):
         needs_key = not (p and p.api_key)
         exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
@@ -433,24 +426,20 @@ def _make_provider(config: Config):
         is_oauth_provider = spec is not None and getattr(spec, "is_oauth", False)
         credential_store = OAuthCredentialStore() if is_oauth_provider else None
 
-        # Bootstrap: migrate from Claude CLI credentials if nanobot store is empty
-        if credential_store:
-            stored = credential_store.load()
-            if stored is None:
-                # Try loading from Claude CLI and saving to nanobot store
-                cli_creds = credential_store._load_claude_cli()
-                if cli_creds:
-                    credential_store.save(cli_creds)
-                    logger.info("OAuth credentials migrated from Claude CLI to nanobot store")
-
-        # Resolve API key: config → credential store → ANTHROPIC_OAUTH_TOKEN env → ANTHROPIC_API_KEY env
+        # Resolve API key: config → credential store (with CLI migration) → env vars
         anthropic_key = (p.api_key if p else None)
         if not anthropic_key and credential_store:
-            stored = credential_store.load()
-            if stored:
-                anthropic_key = stored.access_token
+            anthropic_key = credential_store.load_or_migrate()
+            if anthropic_key:
+                anthropic_key = anthropic_key.access_token
         if not anthropic_key:
             anthropic_key = os.environ.get("ANTHROPIC_OAUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
+
+        if not anthropic_key and not is_oauth_provider:
+            console.print("[red]Error: Anthropic requires api_key or ANTHROPIC_OAUTH_TOKEN env var.[/red]")
+            console.print("Set api_key in ~/.nanobot/config.json under providers.anthropic (or providers.anthropic_claude_code)")
+            console.print("Or set the ANTHROPIC_OAUTH_TOKEN environment variable.")
+            raise typer.Exit(1)
 
         provider = AnthropicProvider(
             api_key=anthropic_key,
