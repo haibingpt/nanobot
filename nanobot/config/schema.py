@@ -169,6 +169,12 @@ class MCPServerConfig(Base):
     tool_timeout: int = 30  # seconds before a tool call is cancelled
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names; ["*"] = all tools; [] = no tools
 
+class TraceConfig(Base):
+    """LLM request/response trace logging."""
+
+    enabled: bool = True
+
+
 class ToolsConfig(Base):
     """Tools configuration."""
 
@@ -202,6 +208,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
+    trace: TraceConfig = Field(default_factory=TraceConfig)
 
     @property
     def workspace_path(self) -> Path:
