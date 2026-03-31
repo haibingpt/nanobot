@@ -312,6 +312,14 @@ class DiscordChannel(BaseChannel):
         content = payload.get("content") or ""
         guild_id = payload.get("guild_id")
 
+        # Resolve sender display name: guild nick > global_name > username
+        member = payload.get("member") or {}
+        sender_name = (
+            member.get("nick")
+            or author.get("global_name")
+            or author.get("username")
+        )
+
         if not sender_id or not channel_id:
             return
 
@@ -374,6 +382,8 @@ class DiscordChannel(BaseChannel):
         }
         if channel_name:
             metadata["channel_name"] = channel_name
+        if sender_name:
+            metadata["sender_name"] = sender_name
 
         await self._handle_message(
             sender_id=sender_id,
