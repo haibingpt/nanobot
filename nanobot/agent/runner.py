@@ -97,10 +97,9 @@ class AgentRunner:
                 response = await self.provider.chat_with_retry(**kwargs)
 
             raw_usage = response.usage or {}
-            usage = {
-                "prompt_tokens": int(raw_usage.get("prompt_tokens", 0) or 0),
-                "completion_tokens": int(raw_usage.get("completion_tokens", 0) or 0),
-            }
+            for k, v in raw_usage.items():
+                if isinstance(v, (int, float)):
+                    usage[k] = usage.get(k, 0) + int(v)
 
             if response.has_tool_calls:
                 if spec.on_stream_end:

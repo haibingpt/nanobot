@@ -300,18 +300,26 @@ class OpenAICompatProvider(LLMProvider):
 
         usage_map = cls._maybe_mapping(usage_obj)
         if usage_map is not None:
-            return {
-                "prompt_tokens": int(usage_map.get("prompt_tokens") or 0),
-                "completion_tokens": int(usage_map.get("completion_tokens") or 0),
-                "total_tokens": int(usage_map.get("total_tokens") or 0),
-            }
+            out: dict[str, int] = {}
+            for k, v in usage_map.items():
+                if isinstance(v, (int, float)):
+                    out[k] = int(v)
+                elif isinstance(v, dict):
+                    # Flatten nested details, e.g. prompt_tokens_details.cached_tokens
+                    for sk, sv in v.items():
+                        if isinstance(sv, (int, float)):
+                            out[f"{k}.{sk}"] = int(sv)
+            return out
 
         if usage_obj:
-            return {
-                "prompt_tokens": getattr(usage_obj, "prompt_tokens", 0) or 0,
-                "completion_tokens": getattr(usage_obj, "completion_tokens", 0) or 0,
-                "total_tokens": getattr(usage_obj, "total_tokens", 0) or 0,
-            }
+            out = {}
+            for attr in dir(usage_obj):
+                if attr.startswith("_"):
+                    continue
+                v = getattr(usage_obj, attr, None)
+                if isinstance(v, (int, float)):
+                    out[attr] = int(v)
+            return out
         return {}
 
     def _parse(self, response: Any) -> LLMResponse:
