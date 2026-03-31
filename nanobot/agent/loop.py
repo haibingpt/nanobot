@@ -446,7 +446,9 @@ class AgentLoop:
                 message_id=msg.metadata.get("message_id"),
             )
             self._save_turn(session, all_msgs, 1 + len(history), usage=turn_usage,
-                            elapsed_ms=elapsed, llm_elapsed_ms=llm_elapsed)
+                            elapsed_ms=elapsed, llm_elapsed_ms=llm_elapsed,
+                            sender_id=msg.sender_id,
+                            sender_name=msg.metadata.get("sender_name"))
             self.sessions.save(session)
             self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
             return OutboundMessage(channel=channel, chat_id=chat_id,
@@ -514,7 +516,9 @@ class AgentLoop:
             final_content = "I've completed processing but have no response to give."
 
         self._save_turn(session, all_msgs, 1 + len(history), usage=turn_usage,
-                        elapsed_ms=elapsed, llm_elapsed_ms=llm_elapsed)
+                        elapsed_ms=elapsed, llm_elapsed_ms=llm_elapsed,
+                        sender_id=msg.sender_id,
+                        sender_name=msg.metadata.get("sender_name"))
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 
@@ -581,7 +585,9 @@ class AgentLoop:
 
     def _save_turn(self, session: Session, messages: list[dict], skip: int,
                    usage: dict[str, int] | None = None,
-                   elapsed_ms: int = 0, llm_elapsed_ms: int = 0) -> None:
+                   elapsed_ms: int = 0, llm_elapsed_ms: int = 0,
+                   sender_id: str | None = None,
+                   sender_name: str | None = None) -> None:
         """Save new-turn messages into session, truncating large tool results."""
         from datetime import datetime
         new_msgs = messages[skip:]
@@ -592,6 +598,7 @@ class AgentLoop:
                 if new_msgs[i].get("role") == "assistant":
                     last_assistant_idx = i
                     break
+        first_user_seen = False
         for idx, m in enumerate(new_msgs):
             entry = dict(m)
             role, content = entry.get("role"), entry.get("content")
@@ -615,6 +622,12 @@ class AgentLoop:
                         continue
                     entry["content"] = filtered
             elif role == "user":
+                if not first_user_seen:
+                    first_user_seen = True
+                    if sender_id:
+                        entry["sender_id"] = sender_id
+                    if sender_name:
+                        entry["sender_name"] = sender_name
                 if isinstance(content, str) and content.startswith(ContextBuilder._RUNTIME_CONTEXT_TAG):
                     # Strip the runtime-context prefix, keep only the user text.
                     parts = content.split("\n\n", 1)
