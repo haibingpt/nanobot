@@ -24,6 +24,30 @@ class InboundMessage:
         return self.session_key_override or f"{self.channel}:{self.chat_id}"
 
 
+@dataclass(slots=True)
+class TurnContext:
+    """Routing and identity context for a single turn — eliminates the
+    channel/chat_id/message_id/channel_name/sender_name data clump."""
+
+    channel: str
+    chat_id: str
+    message_id: str | None = None
+    channel_name: str | None = None
+    sender_name: str | None = None
+    sender_id: str | None = None
+
+    @classmethod
+    def from_message(cls, msg: "InboundMessage") -> "TurnContext":
+        return cls(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            message_id=msg.metadata.get("message_id"),
+            channel_name=msg.metadata.get("channel_name"),
+            sender_name=msg.metadata.get("sender_name"),
+            sender_id=msg.sender_id,
+        )
+
+
 @dataclass
 class OutboundMessage:
     """Message to send to a chat channel."""
