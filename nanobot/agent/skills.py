@@ -72,6 +72,26 @@ class SkillsLoader:
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
+        self._skills_cache: list[dict[str, str]] | None = None
+
+    def _discover_skills(self) -> list[dict[str, str]]:
+        """Recursively scan workspace + builtin dirs for all skills."""
+        skills: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        def _scan(root: Path, source: str) -> None:
+            if not root.exists():
+                return
+            for skill_file in sorted(root.rglob("SKILL.md")):
+                name = skill_file.parent.name
+                if name not in seen:
+                    seen.add(name)
+                    skills.append({"name": name, "path": str(skill_file), "source": source})
+
+        _scan(self.workspace_skills, "workspace")
+        if self.builtin_skills:
+            _scan(self.builtin_skills, "builtin")
+        return skills
 
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """
@@ -83,32 +103,16 @@ class SkillsLoader:
         Returns:
             List of skill info dicts with 'name', 'path', 'source'.
         """
-        skills = []
-
-        # Workspace skills (highest priority)
-        if self.workspace_skills.exists():
-            for skill_dir in self.workspace_skills.iterdir():
-                if skill_dir.is_dir():
-                    skill_file = skill_dir / "SKILL.md"
-                    if skill_file.exists():
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "workspace"})
-
-        # Built-in skills
-        if self.builtin_skills and self.builtin_skills.exists():
-            for skill_dir in self.builtin_skills.iterdir():
-                if skill_dir.is_dir():
-                    skill_file = skill_dir / "SKILL.md"
-                    if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
-                        skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
-
-        # Filter by requirements
+        if self._skills_cache is None:
+            self._skills_cache = self._discover_skills()
+        skills = list(self._skills_cache)
         if filter_unavailable:
             return [s for s in skills if self._check_requirements(self._get_skill_meta(s["name"]))]
         return skills
 
     def load_skill(self, name: str) -> str | None:
         """
-        Load a skill by name.
+        Load a skill by name, using discovered path mapping.
 
         Args:
             name: Skill name (directory name).
@@ -116,17 +120,11 @@ class SkillsLoader:
         Returns:
             Skill content or None if not found.
         """
-        # Check workspace first
-        workspace_skill = self.workspace_skills / name / "SKILL.md"
-        if workspace_skill.exists():
-            return workspace_skill.read_text(encoding="utf-8")
-
-        # Check built-in
-        if self.builtin_skills:
-            builtin_skill = self.builtin_skills / name / "SKILL.md"
-            if builtin_skill.exists():
-                return builtin_skill.read_text(encoding="utf-8")
-
+        for s in self.list_skills(filter_unavailable=False):
+            if s["name"] == name:
+                path = Path(s["path"])
+                if path.exists():
+                    return path.read_text(encoding="utf-8")
         return None
 
     def load_skills_for_context(self, skill_names: list[str]) -> str:
