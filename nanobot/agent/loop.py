@@ -518,7 +518,8 @@ class AgentLoop:
             )
             logger.info("Processing system message from {}", ctx.sender_id)
             key = f"{ctx.channel}:{ctx.chat_id}"
-            layout = make_layout(self.workspace, ctx.channel, ctx.channel_name, ctx.chat_id) if ctx.channel_name else None
+            sys_channel_name = ctx.channel_name or ("cli" if channel == "cli" else None)
+            layout = make_layout(self.workspace, channel, sys_channel_name, ctx.chat_id) if sys_channel_name else None
             session = self.sessions.get_or_create(layout or key)
             self._update_runtime_metadata(session, ctx)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
@@ -553,7 +554,12 @@ class AgentLoop:
         logger.info("Processing message from {}:{}: {}", ctx.channel, ctx.sender_id, preview)
 
         key = session_key or msg.session_key
-        layout = make_layout(self.workspace, ctx.channel, ctx.channel_name, ctx.chat_id) if ctx.channel_name else None
+        # Only construct layout when channel_name is resolved (Discord adapter provides it).
+        # When session_key is explicitly passed (e.g. process_direct), skip layout.
+        channel_name = ctx.channel_name if not session_key else None
+        if not channel_name and ctx.channel == "cli" and not session_key:
+            channel_name = "cli"
+        layout = make_layout(self.workspace, ctx.channel, channel_name, ctx.chat_id) if channel_name else None
         session = self.sessions.get_or_create(layout or key)
         self._update_runtime_metadata(session, ctx)
 
