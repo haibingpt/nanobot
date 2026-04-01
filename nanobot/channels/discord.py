@@ -108,6 +108,8 @@ class DiscordChannel(BaseChannel):
         if self._tts_service and msg.content and not msg.metadata.get("_progress"):
             session_tts = msg.metadata.get("_session_tts", False)
             sender_name = msg.metadata.get("sender_name")
+            logger.debug("TTS check: sender_name={}, session_tts={}, auto_senders={}",
+                         sender_name, session_tts, self._tts_service.config.auto_tts_senders)
             if self._tts_service.should_trigger(session_tts=session_tts, sender_name=sender_name):
                 audio_path = await self._tts_service.synthesize(msg.content)
                 if audio_path:
