@@ -190,6 +190,30 @@ class TestResolveSkillFilter:
         inc, exc = resolve_skill_filter(cfg, sender_name="petch")
         assert "coding-*" in exc
 
+    def test_channel_pipe_separator(self):
+        cfg = SkillsConfig(
+            channels={"*paper*|*book*|*article*": SkillsFilterConfig(include=["ljg-*"])}
+        )
+        inc, _ = resolve_skill_filter(cfg, channel_name="xray-paper")
+        assert inc == ["ljg-*"]
+        inc, _ = resolve_skill_filter(cfg, channel_name="read-book")
+        assert inc == ["ljg-*"]
+        inc, _ = resolve_skill_filter(cfg, channel_name="article-review")
+        assert inc == ["ljg-*"]
+        inc, _ = resolve_skill_filter(cfg, channel_name="general")
+        assert inc == ["*"]  # no match, falls to default
+
+    def test_sender_pipe_separator(self):
+        cfg = SkillsConfig(
+            senders={"petch|george": SkillsFilterConfig(exclude=["coding-*"])}
+        )
+        _, exc = resolve_skill_filter(cfg, sender_name="petch")
+        assert "coding-*" in exc
+        _, exc = resolve_skill_filter(cfg, sender_name="george")
+        assert "coding-*" in exc
+        _, exc = resolve_skill_filter(cfg, sender_name="haibin")
+        assert "coding-*" not in exc
+
 
 class TestSkillFilteringIntegration:
     """Integration: ContextBuilder respects skills filtering."""
