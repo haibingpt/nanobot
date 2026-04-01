@@ -417,7 +417,12 @@ class DiscordChannel(BaseChannel):
         return True
 
     async def _resolve_channel_name(self, channel_id: str) -> str | None:
-        """Resolve channel_id to a human-readable name, with in-memory cache."""
+        """Resolve channel_id to a human-readable name, with in-memory cache.
+
+        For threads (type 10/11/12), resolves to the parent channel name so
+        that skill filtering and other channel-name-based logic applies
+        consistently across a channel and all its threads.
+        """
         if channel_id in self._channel_name_cache:
             return self._channel_name_cache[channel_id]
         if not self._http:
@@ -427,7 +432,14 @@ class DiscordChannel(BaseChannel):
             headers = {"Authorization": f"Bot {self.config.token}"}
             resp = await self._http.get(url, headers=headers)
             resp.raise_for_status()
-            name = resp.json().get("name")
+            data = resp.json()
+
+            # Thread → resolve parent channel name
+            if data.get("type") in (10, 11, 12) and data.get("parent_id"):
+                name = await self._resolve_channel_name(data["parent_id"])
+            else:
+                name = data.get("name")
+
             if name:
                 self._channel_name_cache[channel_id] = name
             return name
