@@ -3,19 +3,28 @@
 import json
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 from nanobot.config.paths import get_legacy_sessions_dir
-from nanobot.utils.helpers import ensure_dir, find_legal_message_start, safe_filename
+from nanobot.utils.helpers import ensure_dir, safe_filename
+from nanobot.workspace.layout import WorkspaceLayout
 
 
 @dataclass
 class Session:
-    """A conversation session."""
+    """
+    A conversation session.
+
+    Stores messages in JSONL format for easy reading and persistence.
+
+    Important: Messages are append-only for LLM cache efficiency.
+    The consolidation process writes summaries to MEMORY.md/HISTORY.md
+    but does NOT modify the messages list or get_history() output.
+    """
 
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -35,26 +44,50 @@ class Session:
         self.messages.append(msg)
         self.updated_at = datetime.now()
 
+    @staticmethod
+    def _find_legal_start(messages: list[dict[str, Any]]) -> int:
+        """Find first index where every tool result has a matching assistant tool_call."""
+        declared: set[str] = set()
+        start = 0
+        for i, msg in enumerate(messages):
+            role = msg.get("role")
+            if role == "assistant":
+                for tc in msg.get("tool_calls") or []:
+                    if isinstance(tc, dict) and tc.get("id"):
+                        declared.add(str(tc["id"]))
+            elif role == "tool":
+                tid = msg.get("tool_call_id")
+                if tid and str(tid) not in declared:
+                    start = i + 1
+                    declared.clear()
+                    for prev in messages[start:i + 1]:
+                        if prev.get("role") == "assistant":
+                            for tc in prev.get("tool_calls") or []:
+                                if isinstance(tc, dict) and tc.get("id"):
+                                    declared.add(str(tc["id"]))
+        return start
+
     def get_history(self, max_messages: int = 500) -> list[dict[str, Any]]:
         """Return unconsolidated messages for LLM input, aligned to a legal tool-call boundary."""
         unconsolidated = self.messages[self.last_consolidated:]
         sliced = unconsolidated[-max_messages:]
 
-        # Avoid starting mid-turn when possible.
+        # Drop leading non-user messages to avoid starting mid-turn when possible.
         for i, message in enumerate(sliced):
             if message.get("role") == "user":
                 sliced = sliced[i:]
                 break
 
-        # Drop orphan tool results at the front.
-        start = find_legal_message_start(sliced)
+        # Some providers reject orphan tool results if the matching assistant
+        # tool_calls message fell outside the fixed-size history window.
+        start = self._find_legal_start(sliced)
         if start:
             sliced = sliced[start:]
 
         out: list[dict[str, Any]] = []
         for message in sliced:
             entry: dict[str, Any] = {"role": message["role"], "content": message.get("content", "")}
-            for key in ("tool_calls", "tool_call_id", "name", "reasoning_content"):
+            for key in ("tool_calls", "tool_call_id", "name"):
                 if key in message:
                     entry[key] = message[key]
             out.append(entry)
@@ -87,7 +120,7 @@ class Session:
         retained = self.messages[start_idx:]
 
         # Mirror get_history(): avoid persisting orphan tool results at the front.
-        start = find_legal_message_start(retained)
+        start = self._find_legal_start(retained)
         if start:
             retained = retained[start:]
 
@@ -101,7 +134,9 @@ class SessionManager:
     """
     Manages conversation sessions.
 
-    Sessions are stored as JSONL files in the sessions directory.
+    Sessions are stored as JSONL files. When a WorkspaceLayout is provided,
+    files use the per-channel hierarchy (discord/{name}/sessions/...);
+    otherwise, falls back to the flat workspace/sessions/ directory.
     """
 
     def __init__(self, workspace: Path):
@@ -110,8 +145,10 @@ class SessionManager:
         self.legacy_sessions_dir = get_legacy_sessions_dir()
         self._cache: dict[str, Session] = {}
 
+    # --- Path helpers ---
+
     def _get_session_path(self, key: str) -> Path:
-        """Get the file path for a session."""
+        """Get the file path for a session (flat legacy layout)."""
         safe_key = safe_filename(key.replace(":", "_"))
         return self.sessions_dir / f"{safe_key}.jsonl"
 
@@ -120,28 +157,74 @@ class SessionManager:
         safe_key = safe_filename(key.replace(":", "_"))
         return self.legacy_sessions_dir / f"{safe_key}.jsonl"
 
-    def get_or_create(self, key: str) -> Session:
+    @staticmethod
+    def _session_key(layout: WorkspaceLayout) -> str:
+        return f"{layout.channel}:{layout.chat_id}"
+
+    # --- Core API ---
+
+    def get_or_create(self, key_or_layout) -> Session:
         """
         Get an existing session or create a new one.
 
         Args:
-            key: Session key (usually channel:chat_id).
-
-        Returns:
-            The session.
+            key_or_layout: Session key string (legacy) or WorkspaceLayout (new).
         """
+        if isinstance(key_or_layout, WorkspaceLayout):
+            return self._get_or_create_layout(key_or_layout)
+        return self._get_or_create_key(key_or_layout)
+
+    def _get_or_create_key(self, key: str) -> Session:
+        """Legacy path: flat sessions/ directory."""
         if key in self._cache:
             return self._cache[key]
-
-        session = self._load(key)
+        session = self._load_flat(key)
         if session is None:
             session = Session(key=key)
-
         self._cache[key] = session
         return session
 
-    def _load(self, key: str) -> Session | None:
-        """Load a session from disk."""
+    def _get_or_create_layout(self, layout: WorkspaceLayout) -> Session:
+        """New path: per-channel hierarchy."""
+        key = self._session_key(layout)
+        if key in self._cache:
+            return self._cache[key]
+        session = self._load_layout(layout)
+        if session is None:
+            layout.ensure_dirs()
+            today = date.today().isoformat()
+            seq = layout.next_session_seq(today)
+            session = Session(key=key)
+            session.metadata["_file_path"] = str(layout.session_path(today, seq))
+        self._cache[key] = session
+        return session
+
+    def new_session(self, layout: WorkspaceLayout) -> Session:
+        """Archive current session (keep file on disk), create fresh session with next seq."""
+        key = self._session_key(layout)
+        self._cache.pop(key, None)
+        layout.ensure_dirs()
+        today = date.today().isoformat()
+        seq = layout.next_session_seq(today)
+        session = Session(key=key)
+        session.metadata["_file_path"] = str(layout.session_path(today, seq))
+        self._cache[key] = session
+        return session
+
+    def current_llm_log_path(self, layout: WorkspaceLayout) -> Path:
+        """LLM log path that corresponds to the current session file."""
+        today = date.today().isoformat()
+        path = layout.current_session_path(today)
+        if path:
+            seq = int(path.stem.rsplit("_", 1)[-1])
+        else:
+            seq = layout.next_session_seq(today)
+        return layout.llm_log_path(today, seq)
+
+    # --- Load ---
+
+    def _load_flat(self, key: str) -> Session | None:
+        """Load from flat sessions/ directory with legacy migration."""
         path = self._get_session_path(key)
         if not path.exists():
             legacy_path = self._get_legacy_session_path(key)
@@ -151,10 +234,25 @@ class SessionManager:
                     logger.info("Migrated session {} from legacy path", key)
                 except Exception:
                     logger.exception("Failed to migrate session {}", key)
-
         if not path.exists():
             return None
+        return self._parse_jsonl(path, key)
 
+    def _load_layout(self, layout: WorkspaceLayout) -> Session | None:
+        """Load from per-channel hierarchy. Picks the latest session file for today."""
+        today = date.today().isoformat()
+        path = layout.current_session_path(today)
+        if not path:
+            return None
+        key = self._session_key(layout)
+        session = self._parse_jsonl(path, key)
+        if session:
+            session.metadata["_file_path"] = str(path)
+        return session
+
+    @staticmethod
+    def _parse_jsonl(path: Path, key: str) -> Session | None:
+        """Parse a JSONL session file."""
         try:
             messages = []
             metadata = {}
@@ -166,9 +264,7 @@ class SessionManager:
                     line = line.strip()
                     if not line:
                         continue
-
                     data = json.loads(line)
-
                     if data.get("_type") == "metadata":
                         metadata = data.get("metadata", {})
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
@@ -181,15 +277,22 @@ class SessionManager:
                 messages=messages,
                 created_at=created_at or datetime.now(),
                 metadata=metadata,
-                last_consolidated=last_consolidated
+                last_consolidated=last_consolidated,
             )
         except Exception as e:
             logger.warning("Failed to load session {}: {}", key, e)
             return None
 
+    # --- Save ---
+
     def save(self, session: Session) -> None:
         """Save a session to disk."""
-        path = self._get_session_path(session.key)
+        file_path = session.metadata.get("_file_path")
+        path = Path(file_path) if file_path else self._get_session_path(session.key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Don't persist internal metadata keys
+        persisted_meta = {k: v for k, v in session.metadata.items() if not k.startswith("_")}
 
         with open(path, "w", encoding="utf-8") as f:
             metadata_line = {
@@ -197,8 +300,8 @@ class SessionManager:
                 "key": session.key,
                 "created_at": session.created_at.isoformat(),
                 "updated_at": session.updated_at.isoformat(),
-                "metadata": session.metadata,
-                "last_consolidated": session.last_consolidated
+                "metadata": persisted_meta,
+                "last_consolidated": session.last_consolidated,
             }
             f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
             for msg in session.messages:
