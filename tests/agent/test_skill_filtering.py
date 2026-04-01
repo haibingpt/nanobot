@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from nanobot.agent.context import ContextBuilder
-from nanobot.agent.skills import filter_skill_names, resolve_skill_filter
+from nanobot.agent.skills import SkillsLoader, filter_skill_names, resolve_skill_filter
 from nanobot.config.schema import AgentDefaults, SkillsConfig, SkillsFilterConfig
 
 
@@ -282,3 +282,102 @@ class TestSkillFilteringIntegration:
         assert "coding" in prompt
         assert "weather" in prompt
         assert "ljg-card" not in prompt
+
+
+class TestSkillsLoaderRecursive:
+    """Test recursive skill discovery in subdirectories."""
+
+    def _make_skill(self, path: Path, name: str, desc: str = ""):
+        skill_dir = path / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {desc or name}\n---\n# {name}\n"
+        )
+
+    def _loader(self, ws: Path) -> SkillsLoader:
+        """Create a loader with no builtin skills (isolated test)."""
+        empty = ws / "_no_builtin"
+        empty.mkdir(exist_ok=True)
+        return SkillsLoader(ws, builtin_skills_dir=empty)
+
+    def test_flat_skills(self, tmp_path):
+        ws = tmp_path / "workspace"
+        skills = ws / "skills"
+        skills.mkdir(parents=True)
+        self._make_skill(skills, "coding")
+        self._make_skill(skills, "weather")
+
+        loader = self._loader(ws)
+        names = [s["name"] for s in loader.list_skills(filter_unavailable=False)]
+        assert "coding" in names
+        assert "weather" in names
+
+    def test_nested_skills(self, tmp_path):
+        ws = tmp_path / "workspace"
+        skills = ws / "skills"
+        self._make_skill(skills / "ljg", "ljg-card")
+        self._make_skill(skills / "ljg", "ljg-learn")
+        self._make_skill(skills / "coding", "coding")
+        self._make_skill(skills, "weather")  # flat, still works
+
+        loader = self._loader(ws)
+        names = [s["name"] for s in loader.list_skills(filter_unavailable=False)]
+        assert set(names) == {"ljg-card", "ljg-learn", "coding", "weather"}
+
+    def test_load_skill_from_subdirectory(self, tmp_path):
+        ws = tmp_path / "workspace"
+        skills = ws / "skills"
+        self._make_skill(skills / "petch", "peppa-why", "answer kids questions")
+
+        loader = self._loader(ws)
+        content = loader.load_skill("peppa-why")
+        assert content is not None
+        assert "peppa-why" in content
+
+    def test_duplicate_name_first_wins(self, tmp_path):
+        ws = tmp_path / "workspace"
+        skills = ws / "skills"
+        # "aaa" sorts before "zzz", so aaa/dupe wins
+        dupe_a = skills / "aaa" / "dupe"
+        dupe_a.mkdir(parents=True)
+        (dupe_a / "SKILL.md").write_text("---\nname: dupe\n---\nFirst\n")
+        dupe_z = skills / "zzz" / "dupe"
+        dupe_z.mkdir(parents=True)
+        (dupe_z / "SKILL.md").write_text("---\nname: dupe\n---\nSecond\n")
+
+        loader = self._loader(ws)
+        all_skills = loader.list_skills(filter_unavailable=False)
+        dupe_skills = [s for s in all_skills if s["name"] == "dupe"]
+        assert len(dupe_skills) == 1
+        assert "aaa" in dupe_skills[0]["path"]
+
+    def test_cache_reuse(self, tmp_path):
+        ws = tmp_path / "workspace"
+        skills = ws / "skills"
+        self._make_skill(skills, "coding")
+
+        loader = self._loader(ws)
+        first = loader.list_skills(filter_unavailable=False)
+        # Add a new skill after first scan
+        self._make_skill(skills, "weather")
+        second = loader.list_skills(filter_unavailable=False)
+        # Cache means second call doesn't see the new skill
+        assert len(first) == len(second)
+
+    def test_nested_with_filtering(self, tmp_path):
+        """Integration: subdirectory skills work with skill filtering."""
+        ws = tmp_path / "workspace"
+        skills = ws / "skills"
+        (ws / "memory").mkdir(parents=True)
+        self._make_skill(skills / "ljg", "ljg-card")
+        self._make_skill(skills / "ljg", "ljg-learn")
+        self._make_skill(skills / "coding", "coding")
+        self._make_skill(skills, "weather")
+
+        cfg = SkillsConfig(exclude=["ljg-*"])
+        ctx = ContextBuilder(ws, skills_config=cfg)
+        prompt = ctx.build_system_prompt()
+        assert "coding" in prompt
+        assert "weather" in prompt
+        assert "ljg-card" not in prompt
+        assert "ljg-learn" not in prompt
