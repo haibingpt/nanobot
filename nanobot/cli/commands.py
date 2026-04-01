@@ -572,6 +572,7 @@ def serve(
         mcp_servers=runtime_config.tools.mcp_servers,
         channels_config=runtime_config.channels,
         timezone=runtime_config.agents.defaults.timezone,
+        skills_config=runtime_config.agents.defaults.skills,
     )
 
     model_name = runtime_config.agents.defaults.model
@@ -668,6 +669,7 @@ def gateway(
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
         context_pruning_config=config.agents.defaults.context_pruning,
+        skills_config=config.agents.defaults.skills,
         hooks=hooks,
     )
 
@@ -885,6 +887,7 @@ def agent(
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
         context_pruning_config=config.agents.defaults.context_pruning,
+        skills_config=config.agents.defaults.skills,
         hooks=cli_hooks,
     )
 

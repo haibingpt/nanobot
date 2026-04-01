@@ -4,10 +4,60 @@ import json
 import os
 import re
 import shutil
+from fnmatch import fnmatch
 from pathlib import Path
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
+
+def filter_skill_names(
+    names: list[str], include: list[str], exclude: list[str],
+) -> list[str]:
+    """Filter skill names by include/exclude glob patterns.
+
+    A name passes if it matches any include pattern AND matches no exclude pattern.
+    """
+    def _matches_any(name: str, patterns: list[str]) -> bool:
+        return any(fnmatch(name, p) for p in patterns)
+
+    return [
+        n for n in names
+        if _matches_any(n, include) and not _matches_any(n, exclude)
+    ]
+
+
+def resolve_skill_filter(
+    config: "SkillsConfig",
+    sender_name: str | None = None,
+    channel_name: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Resolve effective (include, exclude) from config + sender + channel.
+
+    Priority: channel (full override) > sender (merge with default) > default.
+    """
+    # Channel: full override, no merge
+    if channel_name:
+        key = channel_name.lower()
+        for k, v in config.channels.items():
+            if k.lower() == key:
+                return list(v.include), list(v.exclude)
+
+    # Start from default
+    include = list(config.include)
+    exclude = list(config.exclude)
+
+    # Sender: merge (include replaces if non-wildcard, exclude extends)
+    if sender_name:
+        key = sender_name.lower()
+        for k, v in config.senders.items():
+            if k.lower() == key:
+                if v.include != ["*"]:
+                    include = list(v.include)
+                exclude = list(set(exclude) | set(v.exclude))
+                break
+
+    return include, exclude
 
 
 class SkillsLoader:
@@ -98,7 +148,7 @@ class SkillsLoader:
 
         return "\n\n---\n\n".join(parts) if parts else ""
 
-    def build_skills_summary(self) -> str:
+    def build_skills_summary(self, allowed_names: set[str] | None = None) -> str:
         """
         Build a summary of all skills (name, description, path, availability).
 
@@ -109,6 +159,8 @@ class SkillsLoader:
             XML-formatted skills summary.
         """
         all_skills = self.list_skills(filter_unavailable=False)
+        if allowed_names is not None:
+            all_skills = [s for s in all_skills if s["name"] in allowed_names]
         if not all_skills:
             return ""
 
@@ -190,10 +242,12 @@ class SkillsLoader:
         meta = self.get_skill_metadata(name) or {}
         return self._parse_nanobot_metadata(meta.get("metadata", ""))
 
-    def get_always_skills(self) -> list[str]:
+    def get_always_skills(self, allowed_names: set[str] | None = None) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
         result = []
         for s in self.list_skills(filter_unavailable=True):
+            if allowed_names is not None and s["name"] not in allowed_names:
+                continue
             meta = self.get_skill_metadata(s["name"]) or {}
             skill_meta = self._parse_nanobot_metadata(meta.get("metadata", ""))
             if skill_meta.get("always") or meta.get("always"):
