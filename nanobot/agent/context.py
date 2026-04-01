@@ -11,6 +11,7 @@ from nanobot.utils.helpers import current_time_str
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader, filter_skill_names, resolve_skill_filter
 from nanobot.utils.helpers import build_assistant_message, detect_image_mime
+from nanobot.workspace.layout import WorkspaceLayout
 
 
 class ContextBuilder:
@@ -30,11 +31,12 @@ class ContextBuilder:
         self, skill_names: list[str] | None = None,
         sender_name: str | None = None,
         channel_name: str | None = None,
+        layout: WorkspaceLayout | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity()]
 
-        bootstrap = self._load_bootstrap_files(sender_name)
+        bootstrap = self._load_bootstrap_files(sender_name, layout=layout)
         if bootstrap:
             parts.append(bootstrap)
 
@@ -68,7 +70,7 @@ Skills with available="false" need dependencies installed first - you can try in
         # Identity anchor: repeat SOUL.md at the end to exploit U-shaped
         # attention (recency peak) and reinforce persona after the long
         # skills block.
-        soul_anchor = self._load_soul_anchor(sender_name)
+        soul_anchor = self._load_soul_anchor(sender_name, layout=layout)
         if soul_anchor:
             parts.append(f"# Remember\n\n{soul_anchor}")
 
@@ -135,34 +137,55 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
             lines.append(f"Sender: {sender_name}")
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
 
-    def _resolve_bootstrap_path(self, filename: str, sender_name: str | None) -> Path:
-        """Resolve bootstrap file: people/{sender}/{file} overrides root {file}."""
+    def _resolve_bootstrap_path(
+        self, filename: str, sender_name: str | None,
+        layout: WorkspaceLayout | None = None,
+    ) -> Path:
+        """Resolve bootstrap file: per-channel people override > root people override > root file."""
         if sender_name:
+            # New: per-channel people directory
+            if layout:
+                override = layout.people_dir / sender_name.lower() / filename
+                if override.exists():
+                    return override
+            # Legacy: root people directory
             override = self.workspace / "people" / sender_name.lower() / filename
             if override.exists():
                 return override
         return self.workspace / filename
 
-    def _load_soul_anchor(self, sender_name: str | None = None) -> str | None:
+    def _load_soul_anchor(
+        self, sender_name: str | None = None,
+        layout: WorkspaceLayout | None = None,
+    ) -> str | None:
         """Load SOUL.md for end-of-prompt identity reinforcement."""
-        soul_path = self._resolve_bootstrap_path("SOUL.md", sender_name)
+        soul_path = self._resolve_bootstrap_path("SOUL.md", sender_name, layout=layout)
         if soul_path.exists():
             return soul_path.read_text(encoding="utf-8").strip()
         return None
 
-    def _load_bootstrap_files(self, sender_name: str | None = None) -> str:
+    def _load_bootstrap_files(
+        self, sender_name: str | None = None,
+        layout: WorkspaceLayout | None = None,
+    ) -> str:
         """Load all bootstrap files from workspace.
 
         Per-sender overrides: if people/{sender}/{file}.md exists, it
         replaces the root-level file for that sender.
+        Per-channel AGENT.md is appended as a layer if present.
         """
         parts = []
 
         for filename in self.BOOTSTRAP_FILES:
-            file_path = self._resolve_bootstrap_path(filename, sender_name)
+            file_path = self._resolve_bootstrap_path(filename, sender_name, layout=layout)
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
+
+        # Layer: per-channel AGENT.md
+        if layout and layout.agent_md.exists():
+            content = layout.agent_md.read_text(encoding="utf-8")
+            parts.append(f"## AGENT.md (channel)\n\n{content}")
 
         return "\n\n".join(parts) if parts else ""
 
@@ -177,6 +200,7 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
         current_role: str = "user",
         channel_name: str | None = None,
         sender_name: str | None = None,
+        layout: WorkspaceLayout | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         runtime_ctx = self._build_runtime_context(
@@ -195,6 +219,7 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
         return [
             {"role": "system", "content": self.build_system_prompt(
                 skill_names, sender_name=sender_name, channel_name=channel_name,
+                layout=layout,
             )},
             *history,
             {"role": current_role, "content": merged},
