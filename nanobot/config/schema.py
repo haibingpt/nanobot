@@ -208,6 +208,8 @@ class TTSConfig(Base):
     voice: str = "zh-CN-XiaoxiaoNeural"
     max_text_length: int = 2000
 
+    auto_tts_senders: list[str] = Field(default_factory=list)  # Sender names that auto-trigger TTS
+
     # Fish Audio specific
     fish_api_key: str = ""
     fish_reference_id: str = ""

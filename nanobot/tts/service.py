@@ -25,7 +25,12 @@ class TTSService:
         self._temp_dir = Path(tempfile.gettempdir()) / "nanobot_tts"
         self._temp_dir.mkdir(exist_ok=True)
 
-    def should_trigger(self, session_tts: bool = False, skill_meta: dict[str, Any] | None = None, sender_name: str | None = None) -> bool:
+    def should_trigger(
+        self,
+        session_tts: bool = False,
+        skill_meta: dict[str, Any] | None = None,
+        sender_name: str | None = None,
+    ) -> bool:
         """Check if TTS should be triggered for this response."""
         if not self.config.enabled:
             return False
@@ -33,6 +38,10 @@ class TTSService:
             return True
         if skill_meta and skill_meta.get("tts"):
             return True
+        # Auto-TTS for configured sender names (case-insensitive)
+        if sender_name and self.config.auto_tts_senders:
+            if sender_name.lower() in (s.lower() for s in self.config.auto_tts_senders):
+                return True
         return False
 
     async def synthesize(self, text: str, voice: str | None = None) -> Path | None:
