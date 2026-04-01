@@ -36,11 +36,11 @@ def resolve_skill_filter(
 
     Priority: channel (full override) > sender (merge with default) > default.
     """
-    # Channel: full override, no merge
+    # Channel: full override, no merge (supports glob patterns in keys)
     if channel_name:
         key = channel_name.lower()
         for k, v in config.channels.items():
-            if k.lower() == key:
+            if fnmatch(key, k.lower()):
                 return list(v.include), list(v.exclude)
 
     # Start from default
@@ -51,7 +51,7 @@ def resolve_skill_filter(
     if sender_name:
         key = sender_name.lower()
         for k, v in config.senders.items():
-            if k.lower() == key:
+            if fnmatch(key, k.lower()):
                 if v.include != ["*"]:
                     include = list(v.include)
                 exclude = list(set(exclude) | set(v.exclude))

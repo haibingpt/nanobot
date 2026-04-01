@@ -158,6 +158,38 @@ class TestResolveSkillFilter:
         inc, exc = resolve_skill_filter(cfg, sender_name="Petch")
         assert "coding-*" in exc
 
+    def test_channel_glob_pattern(self):
+        cfg = SkillsConfig(
+            channels={"*nanobot*": SkillsFilterConfig(include=["coding*"])}
+        )
+        inc, exc = resolve_skill_filter(cfg, channel_name="nanobot skill")
+        assert inc == ["coding*"]
+
+    def test_channel_glob_no_match(self):
+        cfg = SkillsConfig(
+            channels={"*nanobot*": SkillsFilterConfig(include=["coding*"])}
+        )
+        inc, exc = resolve_skill_filter(cfg, channel_name="general")
+        assert inc == ["*"]  # falls back to default
+
+    def test_channel_first_match_wins(self):
+        cfg = SkillsConfig(
+            channels={
+                "develop*": SkillsFilterConfig(include=["coding*"]),
+                "*nanobot*": SkillsFilterConfig(include=["weather"]),
+            }
+        )
+        # "develop nanobot" matches both, first wins
+        inc, exc = resolve_skill_filter(cfg, channel_name="develop nanobot")
+        assert inc == ["coding*"]
+
+    def test_sender_glob_pattern(self):
+        cfg = SkillsConfig(
+            senders={"pet*": SkillsFilterConfig(exclude=["coding-*"])}
+        )
+        inc, exc = resolve_skill_filter(cfg, sender_name="petch")
+        assert "coding-*" in exc
+
 
 class TestSkillFilteringIntegration:
     """Integration: ContextBuilder respects skills filtering."""
