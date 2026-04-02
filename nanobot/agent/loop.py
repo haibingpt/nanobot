@@ -224,6 +224,7 @@ class AgentLoop:
         self._mcp_connected = False
         self._mcp_connecting = False
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
+        self._pending_events: list[dict] = []  # events to flush after session save
         self._background_tasks: list[asyncio.Task] = []
         self._session_locks: dict[str, asyncio.Lock] = {}
         # NANOBOT_MAX_CONCURRENT_REQUESTS: <=0 means unlimited; default 3.
@@ -566,6 +567,7 @@ class AgentLoop:
             )
             self._save_turn(session, result, 1 + len(history), ctx=ctx)
             self.sessions.save(session)
+            self._flush_events(session)
             self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
             return OutboundMessage(channel=ctx.channel, chat_id=ctx.chat_id,
                                   content=result.final_content or "Background task completed.")
@@ -640,6 +642,7 @@ class AgentLoop:
 
         self._save_turn(session, result, 1 + len(history), ctx=ctx)
         self.sessions.save(session)
+        self._flush_events(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
@@ -776,7 +779,7 @@ class AgentLoop:
         # Emit skill-load events for read_file calls targeting SKILL.md
         loaded_skills = self._extract_loaded_skills(new_msgs)
         if loaded_skills:
-            session.messages.append({
+            self._pending_events.append({
                 "_type": "event",
                 "event": "skill_loaded",
                 "skills": loaded_skills,
@@ -785,6 +788,12 @@ class AgentLoop:
             })
 
         session.updated_at = datetime.now()
+
+    def _flush_events(self, session) -> None:
+        """Flush pending events to JSONL file (not into session.messages)."""
+        for event in self._pending_events:
+            self.sessions.append_event(session, event)
+        self._pending_events.clear()
 
     @staticmethod
     def _extract_loaded_skills(messages: list[dict]) -> list[str]:
