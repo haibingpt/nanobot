@@ -499,7 +499,12 @@ class AgentLoop:
         if session_key:
             return None
         name = ctx.channel_name or ("cli" if ctx.channel == "cli" else None)
-        return make_layout(self.workspace, ctx.channel, name, ctx.chat_id) if name else None
+        if not name:
+            return None
+        return make_layout(
+            self.workspace, ctx.channel, name, ctx.chat_id,
+            scope_id=ctx.channel_scope_id or "",
+        )
 
     def _schedule_background(self, coro) -> None:
         """Schedule a coroutine as a tracked background task (drained on shutdown)."""
@@ -529,6 +534,7 @@ class AgentLoop:
                 channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
                 channel_name=msg.metadata.get("channel_name"),
+                channel_scope_id=msg.metadata.get("channel_scope_id"),
                 sender_name=msg.metadata.get("sender_name"),
                 sender_id=msg.sender_id,
             )
@@ -582,6 +588,13 @@ class AgentLoop:
         )
         if result := await self.commands.dispatch(cmd_ctx):
             return result
+
+        # Slash command 来的 skill 请求：/{skill} {input} → 自然语言指令
+        if cmd_ctx.interaction_token and raw.startswith("/"):
+            parts = raw.split(None, 1)
+            skill_name = parts[0].lstrip("/")
+            skill_input = parts[1] if len(parts) > 1 else ""
+            msg.content = f"Use the {skill_name} skill. {skill_input}".strip()
 
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 

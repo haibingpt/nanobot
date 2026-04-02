@@ -15,10 +15,18 @@ class WorkspaceLayout:
 
     workspace: Path
     channel: str          # "discord"
-    channel_name: str     # "develop", "dm-haibin", "cli"
+    channel_name: str     # "develop", "dm-haibin", "cli" — 人类可读名
     chat_id: str          # Discord channel/thread ID, or "direct" for CLI
+    scope_id: str = ""    # Parent channel ID — 用于目录命名，保证全局唯一
 
     # --- 目录 ---
+
+    @property
+    def _dir_name(self) -> str:
+        """目录名：{scope_id}_{channel_name} 或纯 channel_name（无 scope_id 时）。"""
+        if self.scope_id and self.scope_id != self.channel_name:
+            return f"{self.scope_id}_{self.channel_name}"
+        return self.channel_name
 
     @property
     def channel_dir(self) -> Path:
@@ -26,7 +34,7 @@ class WorkspaceLayout:
 
     @property
     def scope_dir(self) -> Path:
-        return self.channel_dir / self.channel_name
+        return self.channel_dir / self._dir_name
 
     @property
     def sessions_dir(self) -> Path:
@@ -83,6 +91,7 @@ def make_layout(
     channel: str,
     channel_name: str | None,
     chat_id: str,
+    scope_id: str = "",
 ) -> WorkspaceLayout:
     """构造 layout。channel_name 未知时 fallback 到 chat_id。"""
     return WorkspaceLayout(
@@ -90,4 +99,5 @@ def make_layout(
         channel=channel,
         channel_name=channel_name or chat_id,
         chat_id=chat_id,
+        scope_id=scope_id,
     )

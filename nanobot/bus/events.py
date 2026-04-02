@@ -33,6 +33,7 @@ class TurnContext:
     chat_id: str
     message_id: str | None = None
     channel_name: str | None = None
+    channel_scope_id: str | None = None  # parent channel ID for directory naming
     sender_name: str | None = None
     sender_id: str | None = None
 
@@ -43,6 +44,7 @@ class TurnContext:
             chat_id=msg.chat_id,
             message_id=msg.metadata.get("message_id"),
             channel_name=msg.metadata.get("channel_name"),
+            channel_scope_id=msg.metadata.get("channel_scope_id"),
             sender_name=msg.metadata.get("sender_name"),
             sender_id=msg.sender_id,
         )
