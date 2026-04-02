@@ -105,3 +105,20 @@ class TestMakeLayout:
     def test_cli_as_discord_channel(self, tmp_path: Path):
         layout = make_layout(tmp_path, "discord", "cli", "direct")
         assert layout.scope_dir == tmp_path / "discord" / "cli"
+
+    def test_scope_id_in_dir_name(self, tmp_path: Path):
+        layout = make_layout(tmp_path, "discord", "develop", "147xxx", scope_id="999aaa")
+        assert layout.scope_dir == tmp_path / "discord" / "999aaa_develop"
+
+    def test_no_scope_id_plain_dir_name(self, tmp_path: Path):
+        layout = make_layout(tmp_path, "discord", "develop", "147xxx")
+        assert layout.scope_dir == tmp_path / "discord" / "develop"
+
+    def test_scope_id_same_as_channel_name_no_duplicate(self, tmp_path: Path):
+        layout = make_layout(tmp_path, "discord", "cli", "direct", scope_id="cli")
+        assert layout.scope_dir == tmp_path / "discord" / "cli"
+
+    def test_different_guilds_same_channel_name(self, tmp_path: Path):
+        l1 = make_layout(tmp_path, "discord", "general", "111", scope_id="guild1_ch1")
+        l2 = make_layout(tmp_path, "discord", "general", "222", scope_id="guild2_ch1")
+        assert l1.scope_dir != l2.scope_dir

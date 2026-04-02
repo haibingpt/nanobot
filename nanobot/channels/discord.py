@@ -60,6 +60,7 @@ class DiscordChannel(BaseChannel):
         self._bot_user_id: str | None = None
         self._app_id: str | None = None
         self._channel_name_cache: dict[str, str] = {}  # channel_id -> name
+        self._channel_scope_cache: dict[str, str] = {}  # channel_id -> scope_id (parent for threads)
 
     async def start(self) -> None:
         """Start the Discord gateway connection."""
@@ -275,8 +276,11 @@ class DiscordChannel(BaseChannel):
                         logger.warning("Failed to extract app_id: {}", e)
                     guild_ids = [str(g["id"]) for g in payload.get("guilds", [])]
                     if guild_ids and self._app_id:
+                        # 尝试构造 SkillsLoader 以注册 skill commands
+                        skills_loader = self._make_skills_loader()
                         asyncio.create_task(register_all_commands(
                             self._http, self.config.token, guild_ids,
+                            skills_loader=skills_loader,
                         ))
             elif op == 0 and event_type == "INTERACTION_CREATE":
                 await self._handle_interaction(payload)
@@ -410,6 +414,7 @@ class DiscordChannel(BaseChannel):
         }
         if channel_name:
             metadata["channel_name"] = channel_name
+            metadata["channel_scope_id"] = self.get_channel_scope_id(channel_id)
         if sender_name:
             metadata["sender_name"] = sender_name
 
@@ -462,9 +467,12 @@ class DiscordChannel(BaseChannel):
 
             channel_type = data.get("type")
 
-            # Thread → resolve parent channel name
+            # Thread → resolve parent channel name + cache scope_id
             if channel_type in (10, 11, 12) and data.get("parent_id"):
-                name = await self._resolve_channel_name(data["parent_id"])
+                parent_id = data["parent_id"]
+                name = await self._resolve_channel_name(parent_id)
+                # scope_id = parent channel ID (threads share parent's directory)
+                self._channel_scope_cache[channel_id] = self._channel_scope_cache.get(parent_id, parent_id)
             # DM → dm-{username}
             elif channel_type == 1:
                 recipients = data.get("recipients") or []
@@ -472,8 +480,10 @@ class DiscordChannel(BaseChannel):
                     name = f"dm-{recipients[0].get('username', channel_id)}"
                 else:
                     name = f"dm-{channel_id}"
+                self._channel_scope_cache[channel_id] = channel_id
             else:
                 name = data.get("name")
+                self._channel_scope_cache[channel_id] = channel_id
 
             if name:
                 self._channel_name_cache[channel_id] = name
@@ -481,6 +491,10 @@ class DiscordChannel(BaseChannel):
         except Exception as e:
             logger.debug("Failed to resolve Discord channel name for {}: {}", channel_id, e)
             return None
+
+    def get_channel_scope_id(self, channel_id: str) -> str:
+        """Return the scope ID for a channel (parent ID for threads, self for channels)."""
+        return self._channel_scope_cache.get(channel_id, channel_id)
 
     async def _start_typing(self, channel_id: str) -> None:
         """Start periodic typing indicator for a channel."""
@@ -506,6 +520,17 @@ class DiscordChannel(BaseChannel):
         task = self._typing_tasks.pop(channel_id, None)
         if task:
             task.cancel()
+
+    def _make_skills_loader(self) -> "SkillsLoader | None":
+        """尝试构造 SkillsLoader 供 slash command 注册使用。"""
+        try:
+            from nanobot.agent.skills import SkillsLoader
+            from nanobot.config.loader import load_config
+            config = load_config()
+            return SkillsLoader(config.workspace_path)
+        except Exception as e:
+            logger.debug("Could not create SkillsLoader for slash commands: {}", e)
+            return None
 
     # ── Slash Command / Interaction 处理 ─────────────────────
 
@@ -591,6 +616,7 @@ class DiscordChannel(BaseChannel):
         }
         if channel_name:
             metadata["channel_name"] = channel_name
+            metadata["channel_scope_id"] = self.get_channel_scope_id(channel_id)
         if sender_name:
             metadata["sender_name"] = sender_name
 
@@ -648,21 +674,14 @@ class DiscordChannel(BaseChannel):
             except Exception as e:
                 logger.warning("Followup file send failed: {}", e)
 
-        # 文本分片
+        # 文本分片（复用 _send_payload 的 rate-limit 重试）
         chunks = split_message(msg.content or "", MAX_MESSAGE_LEN)
         for chunk in chunks:
-            payload: dict[str, Any] = {"content": chunk}
-            try:
-                resp = await self._http.post(url, headers=headers, json=payload)
-                if resp.status_code == 404:
-                    logger.warning("Interaction token expired, falling back to channel msg")
-                    msg.media = []  # media 已全部发完
-                    await self._send_channel_message_fallback(msg)
-                    return
-                resp.raise_for_status()
-            except Exception as e:
-                logger.warning("Followup text send failed: {}", e)
-                break
+            if not await self._send_payload(url, headers, {"content": chunk}):
+                # 可能是 token 过期或其他错误，尝试 fallback
+                msg.media = []
+                await self._send_channel_message_fallback(msg)
+                return
 
     async def _send_channel_message_fallback(self, msg: OutboundMessage) -> None:
         """Interaction token 过期时，降级为普通 channel message。"""
