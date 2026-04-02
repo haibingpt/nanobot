@@ -33,6 +33,7 @@ class Session:
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
     last_consolidated: int = 0                              # 已归档消息数
+    events: list[dict[str, Any]] = field(default_factory=list)  # side-channel events (skill_loaded etc.)
     file_path: Path | None = field(default=None, repr=False)  # 磁盘路径，由 SessionManager 管理
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
@@ -240,6 +241,7 @@ class SessionManager:
     def _parse_jsonl(path: Path, key: str) -> Session | None:
         try:
             messages: list[dict[str, Any]] = []
+            events: list[dict[str, Any]] = []
             metadata: dict[str, Any] = {}
             created_at = None
             last_consolidated = 0
@@ -256,13 +258,14 @@ class SessionManager:
                                       if data.get("created_at") else None)
                         last_consolidated = data.get("last_consolidated", 0)
                     elif data.get("_type"):
-                        continue  # skip event rows and other internal types
+                        events.append(data)  # preserve events in side-channel
                     else:
                         messages.append(data)
 
             return Session(
                 key=key,
                 messages=messages,
+                events=events,
                 created_at=created_at or datetime.now(),
                 metadata=metadata,
                 last_consolidated=last_consolidated,
@@ -289,15 +292,10 @@ class SessionManager:
             f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
             for msg in session.messages:
                 f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            for event in session.events:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
         self._cache[session.key] = session
-
-    def append_event(self, session: "Session", event: dict) -> None:
-        """Append an event line to the session JSONL file without touching messages."""
-        path = session.file_path or self._get_session_path(session.key)
-        if path.exists():
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     def invalidate(self, key: str) -> None:
         self._cache.pop(key, None)
