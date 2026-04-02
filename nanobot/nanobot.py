@@ -66,13 +66,19 @@ class Nanobot:
         bus = MessageBus()
         defaults = config.agents.defaults
 
+        from nanobot.providers.context_window import resolve_context_window_sync
+        ctx_tokens, _ctx_source = resolve_context_window_sync(
+            model=defaults.model,
+            configured_value=defaults.context_window_tokens,
+        )
+
         loop = AgentLoop(
             bus=bus,
             provider=provider,
             workspace=config.workspace_path,
             model=defaults.model,
             max_iterations=defaults.max_tool_iterations,
-            context_window_tokens=defaults.context_window_tokens,
+            context_window_tokens=ctx_tokens,
             web_search_config=config.tools.web.search,
             web_proxy=config.tools.web.proxy or None,
             exec_config=config.tools.exec,
