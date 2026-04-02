@@ -338,6 +338,9 @@ class DiscordChannel(BaseChannel):
         # 普通 bot 消息忽略，但 webhook 消息允许通过（author.id === webhook_id）
         if author.get("bot") and not webhook_id:
             return
+        # 过滤自己的 interaction followup webhook 消息（app_id 即 webhook_id）
+        if webhook_id and self._app_id and str(webhook_id) == str(self._app_id):
+            return
 
         sender_id = str(author.get("id", ""))
         channel_id = str(payload.get("channel_id", ""))
