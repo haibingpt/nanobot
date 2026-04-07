@@ -242,6 +242,7 @@ class AgentLoop:
         self._concurrency_gate: asyncio.Semaphore | None = (
             asyncio.Semaphore(_max) if _max > 0 else None
         )
+        self._pending_events: list[dict] = []  # events to flush after session save
         self.consolidator = Consolidator(
             store=self.context.memory,
             provider=provider,
@@ -719,7 +720,7 @@ class AgentLoop:
         # Emit skill-load events for read_file calls targeting SKILL.md
         loaded_skills = self._extract_loaded_skills(new_msgs)
         if loaded_skills:
-            self._pending_events.append({
+            session.events.append({
                 "_type": "event",
                 "event": "skill_loaded",
                 "skills": loaded_skills,
@@ -803,10 +804,10 @@ class AgentLoop:
         return True
 
     def _flush_events(self, session) -> None:
-        """Flush pending events to JSONL file (not into session.messages)."""
-        for event in self._pending_events:
+        """Persist session.events to JSONL file, then clear the in-memory list."""
+        for event in session.events:
             self.sessions.append_event(session, event)
-        self._pending_events.clear()
+        session.events.clear()
 
     @staticmethod
     def _extract_loaded_skills(messages: list[dict]) -> list[str]:

@@ -20,6 +20,7 @@ class Session:
 
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)  # Non-message events (skill_loaded, etc.)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -274,6 +275,9 @@ class SessionManager:
             f.write(json.dumps(metadata_line, ensure_ascii=False) + "\n")
             for msg in session.messages:
                 f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+            # Persist events (skill_loaded, etc.) after messages
+            for event in session.events:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
         self._cache[session.key] = session
 
