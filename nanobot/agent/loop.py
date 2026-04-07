@@ -564,7 +564,7 @@ class AgentLoop:
                 messages, session=session, channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
             )
-            self._save_turn(session, all_msgs, 1 + len(history))
+            self._save_turn(session, all_msgs, 1 + len(history), sender_name=msg.metadata.get("sender_name"))
             self._clear_runtime_checkpoint(session)
             self.sessions.save(session)
             self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
@@ -621,7 +621,7 @@ class AgentLoop:
         if final_content is None or not final_content.strip():
             final_content = EMPTY_FINAL_RESPONSE_MESSAGE
 
-        self._save_turn(session, all_msgs, 1 + len(history))
+        self._save_turn(session, all_msgs, 1 + len(history), sender_name=msg.metadata.get("sender_name"))
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
         self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
@@ -681,10 +681,11 @@ class AgentLoop:
 
         return filtered
 
-    def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
+    def _save_turn(self, session: Session, messages: list[dict], skip: int, sender_name: str | None = None) -> None:
         """Save new-turn messages into session, truncating large tool results."""
         from datetime import datetime
-        for m in messages[skip:]:
+        new_msgs = messages[skip:]
+        for m in new_msgs:
             entry = dict(m)
             role, content = entry.get("role"), entry.get("content")
             if role == "assistant" and not content and not entry.get("tool_calls"):
@@ -712,6 +713,18 @@ class AgentLoop:
                     entry["content"] = filtered
             entry.setdefault("timestamp", datetime.now().isoformat())
             session.messages.append(entry)
+
+        # Emit skill-load events for read_file calls targeting SKILL.md
+        loaded_skills = self._extract_loaded_skills(new_msgs)
+        if loaded_skills:
+            session.messages.append({
+                "_type": "event",
+                "event": "skill_loaded",
+                "skills": loaded_skills,
+                "sender": sender_name,
+                "timestamp": datetime.now().isoformat(),
+            })
+
         session.updated_at = datetime.now()
 
     def _set_runtime_checkpoint(self, session: Session, payload: dict[str, Any]) -> None:
@@ -785,6 +798,30 @@ class AgentLoop:
 
         self._clear_runtime_checkpoint(session)
         return True
+
+    @staticmethod
+    def _extract_loaded_skills(messages: list[dict]) -> list[str]:
+        """Extract skill names from read_file tool calls targeting SKILL.md."""
+        skills = []
+        for m in messages:
+            if m.get("role") != "assistant":
+                continue
+            for tc in m.get("tool_calls", []):
+                func = tc.get("function", {})
+                if func.get("name") != "read_file":
+                    continue
+                import json as _json
+                try:
+                    args = _json.loads(func.get("arguments", "{}"))
+                except (ValueError, TypeError):
+                    continue
+                path = args.get("path", "")
+                if path.endswith("/SKILL.md") or path.endswith("\\SKILL.md"):
+                    # Extract skill name: parent directory name
+                    parts = path.replace("\\", "/").rstrip("/").split("/")
+                    if len(parts) >= 2:
+                        skills.append(parts[-2])
+        return skills
 
     async def process_direct(
         self,
