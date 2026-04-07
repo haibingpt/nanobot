@@ -198,6 +198,35 @@ class TraceConfig(Base):
     enabled: bool = True
 
 
+class SkillFilterRule(Base):
+    """Skill filter rule for a specific channel or sender."""
+
+    include: list[str] = Field(default_factory=list)  # glob patterns, e.g. ["finishing-*", "test-driven-development"]
+    exclude: list[str] = Field(default_factory=list)  # glob patterns, e.g. ["legacy-*"]
+
+
+class SkillsConfig(Base):
+    """Skills configuration with filtering by channel/sender."""
+
+    # Default rules apply when no specific channel/sender match
+    default: SkillFilterRule = Field(default_factory=SkillFilterRule)
+    # Per-channel rules: key is channel name (supports glob patterns with | separator)
+    channels: dict[str, SkillFilterRule] = Field(default_factory=dict)
+    # Per-sender rules: key is sender name (supports glob patterns with | separator)
+    senders: dict[str, SkillFilterRule] = Field(default_factory=dict)
+
+
+class TTSConfig(Base):
+    """Text-to-speech configuration."""
+
+    enabled: bool = False
+    provider: str = "openai"  # openai, elevenlabs, etc.
+    voice: str = "alloy"  # voice ID
+    api_key: str = ""  # API key (if different from provider config)
+    # Auto-TTS for specific senders (list of sender names or "*" for all)
+    auto_tts_senders: list[str] = Field(default_factory=list)
+
+
 class ToolsConfig(Base):
     """Tools configuration."""
 
@@ -217,6 +246,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
     trace: TraceConfig = Field(default_factory=TraceConfig)
 
