@@ -378,6 +378,9 @@ class DiscordChannel(BaseChannel):
 
         self._working_emoji_tasks[channel_id] = asyncio.create_task(_delayed_working_emoji())
 
+        # Calculate scope_id for multi-guild uniqueness (guild ID for guild channels, DM channel ID for DMs)
+        scope_id = str(message.guild.id) if message.guild else channel_id
+
         try:
             await self._handle_message(
                 sender_id=sender_id,
@@ -385,6 +388,7 @@ class DiscordChannel(BaseChannel):
                 content=full_content,
                 media=media_paths,
                 metadata=metadata,
+                scope_id=scope_id,
             )
         except Exception:
             await self._clear_reactions(channel_id)
