@@ -567,6 +567,7 @@ class AgentLoop:
             self._save_turn(session, all_msgs, 1 + len(history), sender_name=msg.metadata.get("sender_name"))
             self._clear_runtime_checkpoint(session)
             self.sessions.save(session)
+            self._flush_events(session)
             self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
             return OutboundMessage(channel=channel, chat_id=chat_id,
                                   content=final_content or "Background task completed.")
@@ -624,6 +625,7 @@ class AgentLoop:
         self._save_turn(session, all_msgs, 1 + len(history), sender_name=msg.metadata.get("sender_name"))
         self._clear_runtime_checkpoint(session)
         self.sessions.save(session)
+        self._flush_events(session)
         self._schedule_background(self.consolidator.maybe_consolidate_by_tokens(session))
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
@@ -717,7 +719,7 @@ class AgentLoop:
         # Emit skill-load events for read_file calls targeting SKILL.md
         loaded_skills = self._extract_loaded_skills(new_msgs)
         if loaded_skills:
-            session.messages.append({
+            self._pending_events.append({
                 "_type": "event",
                 "event": "skill_loaded",
                 "skills": loaded_skills,
@@ -727,6 +729,7 @@ class AgentLoop:
 
         session.updated_at = datetime.now()
 
+<<<<<<< HEAD
     def _set_runtime_checkpoint(self, session: Session, payload: dict[str, Any]) -> None:
         """Persist the latest in-flight turn state into session metadata."""
         session.metadata[self._RUNTIME_CHECKPOINT_KEY] = payload
@@ -798,6 +801,12 @@ class AgentLoop:
 
         self._clear_runtime_checkpoint(session)
         return True
+
+    def _flush_events(self, session) -> None:
+        """Flush pending events to JSONL file (not into session.messages)."""
+        for event in self._pending_events:
+            self.sessions.append_event(session, event)
+        self._pending_events.clear()
 
     @staticmethod
     def _extract_loaded_skills(messages: list[dict]) -> list[str]:

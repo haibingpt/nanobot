@@ -54,6 +54,8 @@ class Session:
 
         out: list[dict[str, Any]] = []
         for message in sliced:
+            if "role" not in message:
+                continue  # skip internal events (e.g. _type: event)
             entry: dict[str, Any] = {"role": message["role"], "content": message.get("content", "")}
             for key in ("tool_calls", "tool_call_id", "name", "reasoning_content"):
                 if key in message:
@@ -233,6 +235,8 @@ class SessionManager:
                         metadata = data.get("metadata", {})
                         created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
                         last_consolidated = data.get("last_consolidated", 0)
+                    elif data.get("_type"):
+                        continue  # skip event rows and other internal types
                     else:
                         messages.append(data)
 
@@ -272,6 +276,14 @@ class SessionManager:
                 f.write(json.dumps(msg, ensure_ascii=False) + "\n")
 
         self._cache[session.key] = session
+
+    def append_event(self, session: "Session", event: dict) -> None:
+        """Append an event line to the session JSONL file without touching messages."""
+        file_path = session.metadata.get("_file_path")
+        path = Path(file_path) if file_path else self._get_session_path(session.key)
+        if path.exists():
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     def invalidate(self, key: str) -> None:
         """Remove a session from the in-memory cache."""
