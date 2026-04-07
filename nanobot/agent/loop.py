@@ -363,6 +363,11 @@ class AgentLoop:
             chat_id=chat_id,
             message_id=message_id,
         )
+        # Route trace hooks to the correct session file
+        for h in self._extra_hooks:
+            if hasattr(h, "session_key"):
+                h.session_key = f"{channel}:{chat_id}"
+
         hook: AgentHook = (
             _LoopHookChain(loop_hook, self._extra_hooks)
             if self._extra_hooks
