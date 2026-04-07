@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.utils.helpers import build_assistant_message
@@ -62,8 +63,13 @@ class AgentRunResult:
 class AgentRunner:
     """Run a tool-capable LLM loop without product-layer concerns."""
 
-    def __init__(self, provider: LLMProvider):
+    def __init__(
+        self,
+        provider: LLMProvider,
+        trace_hook: AgentHook | None = None,
+    ):
         self.provider = provider
+        self.trace_hook = trace_hook
 
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:
         t0 = time.monotonic()
@@ -76,10 +82,21 @@ class AgentRunner:
         stop_reason = "completed"
         tool_events: list[dict[str, str]] = []
 
-        for _ in range(spec.max_iterations):
+        for iteration in range(spec.max_iterations):
             # transient context pruning（每次 LLM call 前轻量修剪 tool results）
             if spec.pruner is not None:
                 messages = spec.pruner.prune(messages, context_window_chars=spec.context_window_chars)
+
+            # Create hook context for this iteration
+            hook_context = AgentHookContext(
+                iteration=iteration,
+                messages=messages,
+                usage=dict(usage),
+            )
+
+            # Trigger before_iteration hook
+            if self.trace_hook:
+                await self.trace_hook.before_iteration(hook_context)
 
             kwargs: dict[str, Any] = {
                 "messages": messages,
@@ -103,10 +120,19 @@ class AgentRunner:
                 response = await self.provider.chat_with_retry(**kwargs)
             llm_total_ms += int((time.monotonic() - llm_t0) * 1000)
 
+            # Update hook context with response data
+            hook_context.response = response
+            hook_context.tool_calls = list(response.tool_calls) if response.tool_calls else []
+
             raw_usage = response.usage or {}
             for k, v in raw_usage.items():
                 if isinstance(v, (int, float)):
                     usage[k] = usage.get(k, 0) + int(v)
+            hook_context.usage = dict(usage)
+
+            # Trigger after_iteration hook
+            if self.trace_hook:
+                await self.trace_hook.after_iteration(hook_context)
 
             if response.has_tool_calls:
                 if spec.on_stream_end:
