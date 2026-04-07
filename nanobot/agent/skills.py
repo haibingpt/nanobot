@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+from fnmatch import fnmatch
 from pathlib import Path
 
 # Default builtin skills directory (relative to this file)
@@ -18,6 +19,58 @@ _STRIP_SKILL_FRONTMATTER = re.compile(
 
 def _escape_xml(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def filter_skill_names(
+    names: list[str], include: list[str], exclude: list[str],
+) -> list[str]:
+    """Filter skill names by include/exclude glob patterns.
+
+    A name passes if it matches any include pattern AND matches no exclude pattern.
+    """
+    def _matches_any(name: str, patterns: list[str]) -> bool:
+        return any(fnmatch(name, p) for p in patterns)
+
+    return [
+        n for n in names
+        if _matches_any(n, include) and not _matches_any(n, exclude)
+    ]
+
+
+def resolve_skill_filter(
+    config: "SkillsConfig",
+    sender_name: str | None = None,
+    channel_name: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Resolve effective (include, exclude) from config + sender + channel.
+
+    Priority: channel (full override) > sender (full override) > default
+    """
+    from nanobot.config.schema import SkillFilterRule
+
+    def _match_key(key: str, patterns: list[str]) -> bool:
+        """Match key against patterns (supports | separator for multiple patterns)."""
+        for pattern in patterns:
+            for sub in pattern.split("|"):
+                sub = sub.strip()
+                if fnmatch(key, sub):
+                    return True
+        return False
+
+    # Find matching channel rule
+    if channel_name and config.channels:
+        for key, rule in config.channels.items():
+            if _match_key(channel_name, [key]):
+                return (rule.include, rule.exclude)
+
+    # Find matching sender rule
+    if sender_name and config.senders:
+        for key, rule in config.senders.items():
+            if _match_key(sender_name, [key]):
+                return (rule.include, rule.exclude)
+
+    # Fall back to default
+    return (config.default.include, config.default.exclude)
 
 
 class SkillsLoader:
@@ -192,17 +245,17 @@ class SkillsLoader:
         meta = self.get_skill_metadata(name) or {}
         return self._parse_nanobot_metadata(meta.get("metadata", ""))
 
-    def get_always_skills(self) -> list[str]:
+    def get_always_skills(self, allowed_names: set[str] | None = None) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
-        return [
-            entry["name"]
-            for entry in self.list_skills(filter_unavailable=True)
-            if (meta := self.get_skill_metadata(entry["name"]) or {})
-            and (
-                self._parse_nanobot_metadata(meta.get("metadata", "")).get("always")
-                or meta.get("always")
-            )
-        ]
+        result = []
+        for entry in self.list_skills(filter_unavailable=True):
+            if allowed_names is not None and entry["name"] not in allowed_names:
+                continue
+            meta = self.get_skill_metadata(entry["name"]) or {}
+            skill_meta = self._parse_nanobot_metadata(meta.get("metadata", ""))
+            if skill_meta.get("always") or meta.get("always"):
+                result.append(entry["name"])
+        return result
 
     def get_skill_metadata(self, name: str) -> dict | None:
         """
