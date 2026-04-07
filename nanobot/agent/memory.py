@@ -18,6 +18,7 @@ from nanobot.utils.helpers import ensure_dir, estimate_message_tokens, estimate_
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.utils.gitstore import GitStore
+from nanobot.workspace.layout import WorkspaceLayout
 
 if TYPE_CHECKING:
     from nanobot.providers.base import LLMProvider
@@ -38,8 +39,14 @@ class MemoryStore:
         r"^\[\d{4}-\d{2}-\d{2}[^\]]*\]\s+[A-Z][A-Z0-9_]*(?:\s+\[tools:\s*[^\]]+\])?:"
     )
 
-    def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY):
+    def __init__(
+        self,
+        workspace: Path,
+        layout: WorkspaceLayout | None = None,
+        max_history_entries: int = _DEFAULT_MAX_HISTORY,
+    ):
         self.workspace = workspace
+        self.layout = layout
         self.max_history_entries = max_history_entries
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
@@ -49,7 +56,9 @@ class MemoryStore:
         self.user_file = workspace / "USER.md"
         self._cursor_file = self.memory_dir / ".cursor"
         self._dream_cursor_file = self.memory_dir / ".dream_cursor"
-        self._git = GitStore(workspace, tracked_files=[
+        # Use layout.workspace for GitStore if layout exists, otherwise use workspace
+        git_workspace = layout.workspace if layout else workspace
+        self._git = GitStore(git_workspace, tracked_files=[
             "SOUL.md", "USER.md", "memory/MEMORY.md",
         ])
         self._maybe_migrate_legacy_history()
@@ -669,3 +678,7 @@ class Dream:
                 logger.info("Dream commit: {}", sha)
 
         return True
+
+
+# Backward compatibility alias
+MemoryConsolidator = Consolidator
