@@ -424,10 +424,21 @@ class DiscordChannel(BaseChannel):
     def _build_inbound_metadata(message: discord.Message) -> dict[str, str | None]:
         """Build metadata for inbound Discord messages."""
         reply_to = str(message.reference.message_id) if message.reference and message.reference.message_id else None
+        # Resolve thread channel_name to parent channel for consistent skill filtering
+        channel_name = None
+        if isinstance(message.channel, discord.Thread):
+            # Use parent channel name for threads
+            channel_name = message.channel.parent.name if message.channel.parent else None
+        elif isinstance(message.channel, discord.DMChannel):
+            # DM: use dm-{username} format
+            channel_name = f"dm-{message.author.name}"
+        elif hasattr(message.channel, 'name'):
+            channel_name = message.channel.name
         return {
             "message_id": str(message.id),
             "guild_id": str(message.guild.id) if message.guild else None,
             "reply_to": reply_to,
+            "channel_name": channel_name,
         }
 
     def _should_respond_in_group(self, message: discord.Message, content: str) -> bool:
