@@ -35,9 +35,10 @@ from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 from nanobot.utils.helpers import image_placeholder_text, truncate_text
 from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+from nanobot.workspace.layout import WorkspaceLayout
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ChannelsConfig, ExecToolConfig, WebToolsConfig
+    from nanobot.config.schema import ChannelsConfig, ExecToolConfig, WebToolsConfig, TTSConfig
     from nanobot.cron.service import CronService
 
 
@@ -256,7 +257,23 @@ class AgentLoop:
             provider=provider,
             model=self.model,
         )
+        self.tts_config: TTSConfig | None = None
+        self._tts_service: Any = None
         self._register_default_tools()
+
+    def setup_tts(self, tts_config: TTSConfig | None) -> None:
+        """Setup TTS service with configuration."""
+        if not tts_config or not tts_config.enabled:
+            return
+        self.tts_config = tts_config
+        from nanobot.tts.service import TTSService
+        self._tts_service = TTSService(
+            enabled=tts_config.enabled,
+            provider=tts_config.provider,
+            voice=tts_config.voice,
+            api_key=tts_config.api_key,
+            auto_tts_senders=tts_config.auto_tts_senders,
+        )
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
 
