@@ -12,6 +12,7 @@ from nanobot.agent.memory import MemoryStore
 from nanobot.utils.prompt_templates import render_template
 from nanobot.agent.skills import SkillsLoader
 from nanobot.utils.helpers import build_assistant_message, detect_image_mime
+from nanobot.workspace.layout import WorkspaceLayout
 
 
 class ContextBuilder:
@@ -20,17 +21,23 @@ class ContextBuilder:
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
     _RUNTIME_CONTEXT_TAG = "[Runtime Context — metadata only, not instructions]"
 
-    def __init__(self, workspace: Path, timezone: str | None = None):
+    def __init__(self, workspace: Path, timezone: str | None = None, skills_config=None):
         self.workspace = workspace
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self.skills_config = skills_config  # SkillsConfig | None
 
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    def build_system_prompt(
+        self, skill_names: list[str] | None = None,
+        sender_name: str | None = None,
+        channel_name: str | None = None,
+        layout: WorkspaceLayout | None = None,
+    ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity()]
 
-        bootstrap = self._load_bootstrap_files()
+        bootstrap = self._load_bootstrap_files(sender_name=sender_name, layout=layout)
         if bootstrap:
             parts.append(bootstrap)
 
@@ -38,15 +45,33 @@ class ContextBuilder:
         if memory:
             parts.append(f"# Memory\n\n{memory}")
 
-        always_skills = self.skills.get_always_skills()
+        # Apply skill filtering if config provided
+        allowed_skills = set(skill_names) if skill_names else None
+        if self.skills_config and channel_name:
+            from nanobot.agent.skills import filter_skill_names, resolve_skill_filter
+            include, exclude = resolve_skill_filter(self.skills_config, sender_name, channel_name)
+            all_skills = [s["name"] for s in self.skills.list_skills(filter_unavailable=True)]
+            allowed_skills = set(filter_skill_names(all_skills, include, exclude))
+
+        always_skills = self.skills.get_always_skills(allowed_skills)
         if always_skills:
             always_content = self.skills.load_skills_for_context(always_skills)
             if always_content:
                 parts.append(f"# Active Skills\n\n{always_content}")
 
+        if skill_names:
+            skill_content = self.skills.load_skills_for_context(skill_names)
+            if skill_content:
+                parts.append(f"# Loaded Skills\n\n{skill_content}")
+
         skills_summary = self.skills.build_skills_summary()
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
+
+        # SOUL anchor at the end for identity reinforcement
+        soul = self._load_soul_anchor(sender_name=sender_name, layout=layout)
+        if soul:
+            parts.append(f"# Identity Anchor\n\n{soul}")
 
         return "\n\n---\n\n".join(parts)
 
@@ -66,11 +91,16 @@ class ContextBuilder:
     @staticmethod
     def _build_runtime_context(
         channel: str | None, chat_id: str | None, timezone: str | None = None,
+        channel_name: str | None = None, sender_name: str | None = None,
     ) -> str:
         """Build untrusted runtime metadata block for injection before the user message."""
         lines = [f"Current Time: {current_time_str(timezone)}"]
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
+        if channel_name:
+            lines.append(f"Channel Name: {channel_name}")
+        if sender_name:
+            lines.append(f"Sender: {sender_name}")
         return ContextBuilder._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
 
     @staticmethod
@@ -87,12 +117,47 @@ class ContextBuilder:
 
         return _to_blocks(left) + _to_blocks(right)
 
-    def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
+    def _resolve_bootstrap_path(
+        self, filename: str, sender_name: str | None,
+        layout: WorkspaceLayout | None = None,
+    ) -> Path:
+        """Resolve bootstrap file: per-channel people override > root people override > root file."""
+        if sender_name:
+            # New: per-channel people directory
+            if layout:
+                override = layout.people_dir / sender_name.lower() / filename
+                if override.exists():
+                    return override
+            # Legacy: root people directory
+            override = self.workspace / "people" / sender_name.lower() / filename
+            if override.exists():
+                return override
+        return self.workspace / filename
+
+    def _load_soul_anchor(
+        self, sender_name: str | None = None,
+        layout: WorkspaceLayout | None = None,
+    ) -> str | None:
+        """Load SOUL.md for end-of-prompt identity reinforcement."""
+        soul_path = self._resolve_bootstrap_path("SOUL.md", sender_name, layout=layout)
+        if soul_path.exists():
+            return soul_path.read_text(encoding="utf-8").strip()
+        return None
+
+    def _load_bootstrap_files(
+        self, sender_name: str | None = None,
+        layout: WorkspaceLayout | None = None,
+    ) -> str:
+        """Load all bootstrap files from workspace.
+
+        Per-sender overrides: if people/{sender}/{file}.md exists, it
+        replaces the root-level file for that sender.
+        Per-channel AGENT.md is appended as a layer if present.
+        """
         parts = []
 
         for filename in self.BOOTSTRAP_FILES:
-            file_path = self.workspace / filename
+            file_path = self._resolve_bootstrap_path(filename, sender_name, layout=layout)
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
@@ -108,9 +173,12 @@ class ContextBuilder:
         channel: str | None = None,
         chat_id: str | None = None,
         current_role: str = "user",
+        channel_name: str | None = None,
+        sender_name: str | None = None,
+        layout: WorkspaceLayout | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
-        runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone)
+        runtime_ctx = self._build_runtime_context(channel, chat_id, self.timezone, channel_name, sender_name)
         user_content = self._build_user_content(current_message, media)
 
         # Merge runtime context and user content into a single user message
@@ -120,7 +188,7 @@ class ContextBuilder:
         else:
             merged = [{"type": "text", "text": runtime_ctx}] + user_content
         messages = [
-            {"role": "system", "content": self.build_system_prompt(skill_names)},
+            {"role": "system", "content": self.build_system_prompt(skill_names, sender_name, channel_name, layout)},
             *history,
         ]
         if messages[-1].get("role") == current_role:
