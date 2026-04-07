@@ -60,6 +60,7 @@ if DISCORD_AVAILABLE:
 
         async def on_ready(self) -> None:
             self._channel._bot_user_id = str(self.user.id) if self.user else None
+            self._channel._app_id = str(self.application_id) if self.application_id else None
             logger.info("Discord bot connected as user {}", self._channel._bot_user_id)
             try:
                 synced = await self.tree.sync()
@@ -261,6 +262,7 @@ class DiscordChannel(BaseChannel):
         self._client: DiscordBotClient | None = None
         self._typing_tasks: dict[str, asyncio.Task[None]] = {}
         self._bot_user_id: str | None = None
+        self._app_id: str | None = None  # Discord application ID for webhook filtering
         self._pending_reactions: dict[str, Any] = {}  # chat_id -> message object
         self._working_emoji_tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -309,7 +311,6 @@ class DiscordChannel(BaseChannel):
             logger.warning("Discord client not ready; dropping outbound message")
             return
 
-<<<<<<< HEAD
         is_progress = bool((msg.metadata or {}).get("_progress"))
 
         # TTS: generate audio, send as attachment only (no text)
@@ -340,6 +341,10 @@ class DiscordChannel(BaseChannel):
     async def _handle_discord_message(self, message: discord.Message) -> None:
         """Handle incoming Discord messages from discord.py."""
         if message.author.bot:
+            return
+        # 过滤自己的 interaction followup webhook 消息（app_id 即 webhook_id）
+        webhook_id = getattr(message, "webhook_id", None)
+        if webhook_id and self._app_id and str(webhook_id) == str(self._app_id):
             return
 
         sender_id = str(message.author.id)
