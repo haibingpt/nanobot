@@ -76,6 +76,9 @@ class AgentDefaults(Base):
     provider_retry_mode: Literal["standard", "persistent"] = "standard"
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
+    fallback_models: list[str] = Field(default_factory=list)  # e.g. ["openrouter/anthropic/claude-sonnet-4"]
+    fallback_cooldown_s: int = 60  # seconds to skip a failed provider before retrying
+    context_pruning: ContextPruningConfig = Field(default_factory=ContextPruningConfig)
     dream: DreamConfig = Field(default_factory=DreamConfig)
 
 
