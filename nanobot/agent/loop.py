@@ -730,7 +730,6 @@ class AgentLoop:
 
         session.updated_at = datetime.now()
 
-<<<<<<< HEAD
     def _set_runtime_checkpoint(self, session: Session, payload: dict[str, Any]) -> None:
         """Persist the latest in-flight turn state into session metadata."""
         session.metadata[self._RUNTIME_CHECKPOINT_KEY] = payload
