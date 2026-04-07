@@ -309,7 +309,24 @@ class DiscordChannel(BaseChannel):
             logger.warning("Discord client not ready; dropping outbound message")
             return
 
+<<<<<<< HEAD
         is_progress = bool((msg.metadata or {}).get("_progress"))
+
+        # TTS: generate audio, send as attachment only (no text)
+        if self._tts_service and msg.content and not is_progress:
+            session_tts = msg.metadata.get("_session_tts", False)
+            sender_name = msg.metadata.get("sender_name")
+            logger.debug("TTS check: sender_name={}, session_tts={}, auto_senders={}",
+                         sender_name, session_tts, self._tts_service.auto_tts_senders)
+            if self._tts_service.should_trigger(session_tts=session_tts, sender_name=sender_name):
+                from nanobot.config.paths import get_media_dir
+                audio_path = get_media_dir() / f"tts_{int(time.time())}.mp3"
+                if await self._tts_service.generate_speech(msg.content, audio_path):
+                    if not msg.media:
+                        msg.media = []
+                    msg.media.insert(0, str(audio_path))
+                    # Keep text content when TTS audio is attached (for accessibility)
+                    # msg.content = ""
 
         try:
             await client.send_outbound(msg)

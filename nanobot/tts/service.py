@@ -24,13 +24,24 @@ class TTSService:
         self.auto_tts_senders = set(auto_tts_senders or [])
         self._provider_instance: Any = None
 
-    def should_auto_tts(self, sender_name: str | None) -> bool:
-        """Check if auto-TTS should be applied for this sender."""
-        if not self.enabled or not sender_name:
+    def should_trigger(
+        self,
+        session_tts: bool = False,
+        skill_meta: dict[str, Any] | None = None,
+        sender_name: str | None = None,
+    ) -> bool:
+        """Check if TTS should be triggered for this response."""
+        if not self.enabled:
             return False
-        if "*" in self.auto_tts_senders:
+        if session_tts:
             return True
-        return sender_name in self.auto_tts_senders
+        if skill_meta and skill_meta.get("tts"):
+            return True
+        # Auto-TTS for configured sender names (case-insensitive)
+        if sender_name and self.auto_tts_senders:
+            if sender_name.lower() in (s.lower() for s in self.auto_tts_senders):
+                return True
+        return False
 
     async def generate_speech(self, text: str, output_path: Path) -> bool:
         """Generate speech from text and save to output_path."""

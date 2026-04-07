@@ -220,11 +220,16 @@ class TTSConfig(Base):
     """Text-to-speech configuration."""
 
     enabled: bool = False
-    provider: str = "openai"  # openai, elevenlabs, etc.
+    provider: str = "openai"  # openai, elevenlabs, edge, fish, etc.
     voice: str = "alloy"  # voice ID
     api_key: str = ""  # API key (if different from provider config)
+    max_text_length: int = 2000
     # Auto-TTS for specific senders (list of sender names or "*" for all)
     auto_tts_senders: list[str] = Field(default_factory=list)
+    # Fish Audio specific
+    fish_api_key: str = ""
+    fish_reference_id: str = ""
+    fish_speed: float = 1.2
 
 
 class ToolsConfig(Base):
