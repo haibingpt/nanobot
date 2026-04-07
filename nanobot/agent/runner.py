@@ -31,6 +31,7 @@ class AgentRunSpec:
     temperature: float | None = None
     max_tokens: int | None = None
     reasoning_effort: str | None = None
+    hook: AgentHook | None = None
     on_stream: Callable[[str], Awaitable[None]] | None = None
     on_stream_end: Callable[..., Awaitable[None]] | None = None
     on_tool_calls: Callable[[LLMResponse], Awaitable[None] | None] | None = None
@@ -94,9 +95,10 @@ class AgentRunner:
                 usage=dict(usage),
             )
 
-            # Trigger before_iteration hook
-            if self.trace_hook:
-                await self.trace_hook.before_iteration(hook_context)
+            # Trigger before_iteration hook (prefer spec.hook, fallback to trace_hook)
+            hook = spec.hook or self.trace_hook
+            if hook:
+                await hook.before_iteration(hook_context)
 
             kwargs: dict[str, Any] = {
                 "messages": messages,
@@ -111,10 +113,16 @@ class AgentRunner:
                 kwargs["reasoning_effort"] = spec.reasoning_effort
 
             llm_t0 = time.monotonic()
-            if spec.on_stream:
+            if spec.on_stream or (spec.hook and hasattr(spec.hook, 'on_stream')):
+                # Create wrapper that calls both spec.on_stream and spec.hook.on_stream
+                async def on_content_delta(delta: str) -> None:
+                    if spec.on_stream:
+                        await spec.on_stream(delta)
+                    if spec.hook and hasattr(spec.hook, 'on_stream'):
+                        await spec.hook.on_stream(hook_context, delta)
                 response = await self.provider.chat_stream_with_retry(
                     **kwargs,
-                    on_content_delta=spec.on_stream,
+                    on_content_delta=on_content_delta,
                 )
             else:
                 response = await self.provider.chat_with_retry(**kwargs)
@@ -130,13 +138,16 @@ class AgentRunner:
                     usage[k] = usage.get(k, 0) + int(v)
             hook_context.usage = dict(usage)
 
-            # Trigger after_iteration hook
-            if self.trace_hook:
-                await self.trace_hook.after_iteration(hook_context)
+            # Trigger after_iteration hook (prefer spec.hook, fallback to trace_hook)
+            hook = spec.hook or self.trace_hook
+            if hook:
+                await hook.after_iteration(hook_context)
 
             if response.has_tool_calls:
                 if spec.on_stream_end:
                     await spec.on_stream_end(resuming=True)
+                if spec.hook and hasattr(spec.hook, 'on_stream_end'):
+                    await spec.hook.on_stream_end(hook_context, resuming=True)
                 if spec.on_tool_calls:
                     maybe = spec.on_tool_calls(response)
                     if maybe is not None:
@@ -154,6 +165,8 @@ class AgentRunner:
                     maybe = spec.before_execute_tools(response.tool_calls)
                     if maybe is not None:
                         await maybe
+                if spec.hook and hasattr(spec.hook, 'before_execute_tools'):
+                    await spec.hook.before_execute_tools(hook_context)
 
                 results, new_events, fatal_error = await self._execute_tools(spec, response.tool_calls)
                 tool_events.extend(new_events)
@@ -172,8 +185,16 @@ class AgentRunner:
 
             if spec.on_stream_end:
                 await spec.on_stream_end(resuming=False)
+            if spec.hook and hasattr(spec.hook, 'on_stream_end'):
+                await spec.hook.on_stream_end(hook_context, resuming=False)
 
-            clean = spec.finalize_content(response.content) if spec.finalize_content else response.content
+            # Apply finalize_content from spec or hook
+            clean = response.content
+            if spec.finalize_content:
+                clean = spec.finalize_content(clean)
+            hook = spec.hook or self.trace_hook
+            if hook and hasattr(hook, 'finalize_content'):
+                clean = hook.finalize_content(hook_context, clean)
             if response.finish_reason == "error":
                 final_content = clean or spec.error_message or _DEFAULT_ERROR_MESSAGE
                 stop_reason = "error"
