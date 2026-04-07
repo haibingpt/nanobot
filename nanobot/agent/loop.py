@@ -408,11 +408,10 @@ class AgentLoop:
             tools=self.tools,
             model=self.model,
             max_iterations=self.max_iterations,
+            max_tool_result_chars=self._TOOL_RESULT_MAX_CHARS,
             hook=hook,
             error_message="Sorry, I encountered an error calling the AI model.",
             concurrent_tools=True,
-            pruner=self.pruner,
-            context_window_chars=self.context_window_tokens * 4,
         ))
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":
