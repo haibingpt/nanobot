@@ -261,6 +261,8 @@ class AgentLoop:
         self.tts_config: TTSConfig | None = None
         self._tts_service: Any = None
         self._register_default_tools()
+        self.commands = CommandRouter()
+        register_builtin_commands(self.commands)
 
     def setup_tts(self, tts_config: TTSConfig | None) -> None:
         """Setup TTS service with configuration."""
@@ -275,8 +277,6 @@ class AgentLoop:
             api_key=tts_config.api_key,
             auto_tts_senders=tts_config.auto_tts_senders,
         )
-        self.commands = CommandRouter()
-        register_builtin_commands(self.commands)
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
