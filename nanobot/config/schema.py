@@ -220,6 +220,22 @@ class ExecToolConfig(Base):
     rtk_enabled: bool = False   # 开启后命令执行前通过 `rtk rewrite` 压缩，节省 60-90% token
     rtk_verbose: bool = False   # 开启后将 rewrite 结果记录到 debug 日志
 
+
+class CommandRewriteConfig(Base):
+    """Cross-cutting tool-argument rewrite hook configuration.
+
+    Applied via an AgentHook before tool execution to rewrite command strings
+    in tool calls (currently only `exec`). The current (and so-far only)
+    strategy is `rtk rewrite` command compression, saving 60–90% tokens.
+    Designed to be extensible to future rewrites (SQL redaction, path
+    normalization, sensitive-word filtering) without touching individual tools.
+    """
+
+    enabled: bool = False
+    verbose: bool = False
+    timeout: float = 5.0
+
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -243,6 +259,7 @@ class ToolsConfig(Base):
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    command_rewrite: CommandRewriteConfig = Field(default_factory=CommandRewriteConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     extra_allowed_paths: list[str] = Field(default_factory=list)  # Additional paths allowed when restrict_to_workspace=True
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
