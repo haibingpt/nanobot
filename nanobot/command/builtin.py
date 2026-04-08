@@ -84,7 +84,7 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
         loop.sessions.save(session)
         loop.sessions.invalidate(session.key)
     if snapshot:
-        loop._schedule_background(loop.memory_consolidator.archive_messages(snapshot))
+        loop._schedule_background(loop.memory_consolidator.archive(snapshot))
     return ctx.make_response("New session started.")
 
 
