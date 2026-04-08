@@ -51,8 +51,8 @@ class WorkspaceLayout:
     # --- 文件 ---
 
     @property
-    def agent_md(self) -> Path:
-        return self.scope_dir / "AGENT.md"
+    def agents_md(self) -> Path:
+        return self.scope_dir / "AGENTS.md"
 
     def session_path(self, date: str, seq: int) -> Path:
         return self.sessions_dir / f"{date}_{self.chat_id}_{seq:02d}.jsonl"

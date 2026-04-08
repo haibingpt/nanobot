@@ -25,9 +25,9 @@ class TestWorkspaceLayout:
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
         assert layout.people_dir == tmp_path / "discord" / "people"
 
-    def test_agent_md(self, tmp_path: Path):
+    def test_agents_md(self, tmp_path: Path):
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
-        assert layout.agent_md == tmp_path / "discord" / "develop" / "AGENT.md"
+        assert layout.agents_md == tmp_path / "discord" / "develop" / "AGENTS.md"
 
     def test_session_path(self, tmp_path: Path):
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")

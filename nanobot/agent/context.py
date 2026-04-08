@@ -141,17 +141,21 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
         self, filename: str, sender_name: str | None,
         layout: WorkspaceLayout | None = None,
     ) -> Path:
-        """Resolve bootstrap file: per-channel people override > root people override > root file."""
+        """Resolve bootstrap file: per-channel > per-channel people > root file."""
+        # Priority 1: per-channel override (e.g., discord/develop/AGENTS.md)
+        if layout:
+            channel_override = layout.scope_dir / filename
+            if channel_override.exists():
+                return channel_override
+
         if sender_name:
-            # New: per-channel people directory
+            # Priority 2: per-channel people directory
             if layout:
                 override = layout.people_dir / sender_name.lower() / filename
                 if override.exists():
                     return override
-            # Legacy: root people directory
-            override = self.workspace / "people" / sender_name.lower() / filename
-            if override.exists():
-                return override
+
+        # Priority 3: root file
         return self.workspace / filename
 
     def _load_soul_anchor(
@@ -170,9 +174,8 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
     ) -> str:
         """Load all bootstrap files from workspace.
 
-        Per-sender overrides: if people/{sender}/{file}.md exists, it
-        replaces the root-level file for that sender.
-        Per-channel AGENT.md is appended as a layer if present.
+        Priority: per-channel > per-channel people > root people > root file.
+        Each file is resolved independently using _resolve_bootstrap_path.
         """
         parts = []
 
@@ -181,11 +184,6 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
-
-        # Layer: per-channel AGENT.md
-        if layout and layout.agent_md.exists():
-            content = layout.agent_md.read_text(encoding="utf-8")
-            parts.append(f"## AGENT.md (channel)\n\n{content}")
 
         return "\n\n".join(parts) if parts else ""
 

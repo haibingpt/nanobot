@@ -34,40 +34,75 @@ class TestPeopleOverrideFromLayout:
         path = builder._resolve_bootstrap_path("SOUL.md", "nobody", layout=layout)
         assert "Root soul" in path.read_text()
 
-    def test_legacy_root_people_still_works(self, tmp_path: Path):
-        _setup_workspace(tmp_path)
-        # Legacy: workspace/people/alice/SOUL.md
-        (tmp_path / "people" / "alice").mkdir(parents=True)
-        (tmp_path / "people" / "alice" / "SOUL.md").write_text("Alice legacy soul", encoding="utf-8")
-
-        builder = ContextBuilder(tmp_path)
-        # Without layout, should find legacy
-        path = builder._resolve_bootstrap_path("SOUL.md", "alice")
-        assert "Alice legacy soul" in path.read_text()
 
 
-class TestAgentMdLayer:
-    def test_agent_md_appended_to_bootstrap(self, tmp_path: Path):
+
+class TestChannelOverride:
+    """Tests for per-channel override (replaces the old AGENT.md layering)."""
+
+    def test_channel_override_takes_priority_over_root(self, tmp_path: Path):
         _setup_workspace(tmp_path)
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="kids", chat_id="123")
         layout.scope_dir.mkdir(parents=True)
-        layout.agent_md.write_text("# Kids channel rules\nBe gentle.", encoding="utf-8")
+        (layout.scope_dir / "AGENTS.md").write_text("Kids channel agents", encoding="utf-8")
+
+        builder = ContextBuilder(tmp_path)
+        path = builder._resolve_bootstrap_path("AGENTS.md", sender_name=None, layout=layout)
+        assert "Kids channel agents" in path.read_text()
+        assert "Root agents" not in path.read_text()
+
+    def test_channel_override_takes_priority_over_people(self, tmp_path: Path):
+        """Channel > People: per-channel AGENTS.md beats people/{sender}/AGENTS.md"""
+        _setup_workspace(tmp_path)
+        layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="kids", chat_id="123")
+        layout.scope_dir.mkdir(parents=True)
+        (layout.scope_dir / "AGENTS.md").write_text("Kids channel agents", encoding="utf-8")
+
+        # People override exists but should not be used
+        people_dir = layout.people_dir / "petch"
+        people_dir.mkdir(parents=True)
+        (people_dir / "AGENTS.md").write_text("Petch agents override", encoding="utf-8")
+
+        builder = ContextBuilder(tmp_path)
+        path = builder._resolve_bootstrap_path("AGENTS.md", sender_name="petch", layout=layout)
+        assert "Kids channel agents" in path.read_text()
+        assert "Petch agents override" not in path.read_text()
+
+    def test_people_override_used_when_no_channel_override(self, tmp_path: Path):
+        """People > Root: people/{sender}/AGENTS.md beats root AGENTS.md"""
+        _setup_workspace(tmp_path)
+        layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="kids", chat_id="123")
+        # No channel override
+
+        people_dir = layout.people_dir / "petch"
+        people_dir.mkdir(parents=True)
+        (people_dir / "AGENTS.md").write_text("Petch agents override", encoding="utf-8")
+
+        builder = ContextBuilder(tmp_path)
+        path = builder._resolve_bootstrap_path("AGENTS.md", sender_name="petch", layout=layout)
+        assert "Petch agents override" in path.read_text()
+        assert "Root agents" not in path.read_text()
+
+    def test_fallback_to_root_when_no_overrides(self, tmp_path: Path):
+        _setup_workspace(tmp_path)
+        layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="kids", chat_id="123")
+
+        builder = ContextBuilder(tmp_path)
+        path = builder._resolve_bootstrap_path("AGENTS.md", sender_name=None, layout=layout)
+        assert "Root agents" in path.read_text()
+
+    def test_bootstrap_loads_resolved_paths(self, tmp_path: Path):
+        """_load_bootstrap_files uses _resolve_bootstrap_path for each file."""
+        _setup_workspace(tmp_path)
+        layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="kids", chat_id="123")
+        layout.scope_dir.mkdir(parents=True)
+        (layout.scope_dir / "AGENTS.md").write_text("Kids channel agents", encoding="utf-8")
 
         builder = ContextBuilder(tmp_path)
         bootstrap = builder._load_bootstrap_files(sender_name=None, layout=layout)
-        assert "Root agents" in bootstrap
-        assert "Kids channel rules" in bootstrap
-
-    def test_no_agent_md_no_error(self, tmp_path: Path):
-        _setup_workspace(tmp_path)
-        layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="123")
-
-        builder = ContextBuilder(tmp_path)
-        bootstrap = builder._load_bootstrap_files(sender_name=None, layout=layout)
-        assert "Root agents" in bootstrap
-
-    def test_without_layout_no_agent_md(self, tmp_path: Path):
-        _setup_workspace(tmp_path)
-        builder = ContextBuilder(tmp_path)
-        bootstrap = builder._load_bootstrap_files(sender_name=None)
-        assert "AGENT.md (channel)" not in bootstrap
+        # Should have channel override, not root
+        assert "Kids channel agents" in bootstrap
+        assert "Root agents" not in bootstrap
+        # But other files should still come from root
+        assert "Root soul" in bootstrap
+        assert "Root user" in bootstrap
