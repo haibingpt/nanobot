@@ -182,7 +182,6 @@ class AgentLoop:
         command_rewrite_config: CommandRewriteConfig | None = None,
         cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
-        extra_allowed_paths: list[str] | None = None,
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
@@ -220,7 +219,6 @@ class AgentLoop:
         self.command_rewrite_config = command_rewrite_config or CommandRewriteConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
-        self.extra_allowed_paths = [Path(p).expanduser().resolve() for p in (extra_allowed_paths or [])]
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
         _pruning_cfg = context_pruning_config or ContextPruningConfig()
@@ -305,18 +303,15 @@ class AgentLoop:
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        extra_dirs = list(self.extra_allowed_paths) if self.extra_allowed_paths else []
-        extra_read = ([BUILTIN_SKILLS_DIR] + extra_dirs) if allowed_dir else None
-        extra_write = extra_dirs if allowed_dir else None
+        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
         self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
         for cls in (WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_write))
+            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
         if self.exec_config.enable:
             self.tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
-                extra_allowed_paths=[str(p) for p in self.extra_allowed_paths],
                 path_append=self.exec_config.path_append,
             ))
         self.tools.register(WebSearchTool(config=self.web_config.search, proxy=self.web_proxy))
