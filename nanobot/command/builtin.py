@@ -149,24 +149,189 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
 
 
 async def cmd_dream(ctx: CommandContext) -> OutboundMessage:
-    """Manually trigger Dream consolidation."""
+    """Manually trigger a Dream consolidation run."""
+    import time
+
     loop = ctx.loop
-    if hasattr(loop, 'dream') and loop.dream:
-        asyncio.create_task(loop.dream.run_once())
-        return ctx.make_response("🌙 Dream consolidation triggered.")
-    return ctx.make_response("❌ Dream not available.")
+    msg = ctx.msg
+
+    if not hasattr(loop, "dream") or loop.dream is None:
+        return ctx.make_response("❌ Dream not available.")
+
+    async def _run_dream():
+        from nanobot.bus.events import OutboundMessage as _Out
+        t0 = time.monotonic()
+        try:
+            did_work = await loop.dream.run()
+            elapsed = time.monotonic() - t0
+            if did_work:
+                content = f"🌙 Dream completed in {elapsed:.1f}s."
+            else:
+                content = "🌙 Dream: nothing to process."
+        except Exception as e:
+            elapsed = time.monotonic() - t0
+            content = f"❌ Dream failed after {elapsed:.1f}s: {e}"
+        await loop.bus.publish_outbound(_Out(
+            channel=msg.channel, chat_id=msg.chat_id, content=content,
+        ))
+
+    asyncio.create_task(_run_dream())
+    return ctx.make_response("🌙 Dreaming...")
+
+
+def _extract_changed_files(diff: str) -> list[str]:
+    """Extract changed file paths from a unified diff."""
+    files: list[str] = []
+    seen: set[str] = set()
+    for line in diff.splitlines():
+        if not line.startswith("diff --git "):
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        path = parts[3]
+        if path.startswith("b/"):
+            path = path[2:]
+        if path in seen:
+            continue
+        seen.add(path)
+        files.append(path)
+    return files
+
+
+def _format_changed_files(diff: str) -> str:
+    files = _extract_changed_files(diff)
+    if not files:
+        return "No tracked memory files changed."
+    return ", ".join(f"`{path}`" for path in files)
+
+
+def _format_dream_log_content(commit, diff: str, *, requested_sha: str | None = None) -> str:
+    files_line = _format_changed_files(diff)
+    lines = [
+        "## Dream Update",
+        "",
+        "Here is the selected Dream memory change." if requested_sha else "Here is the latest Dream memory change.",
+        "",
+        f"- Commit: `{commit.sha}`",
+        f"- Time: {commit.timestamp}",
+        f"- Changed files: {files_line}",
+    ]
+    if diff:
+        lines.extend([
+            "",
+            f"Use `/dream-restore {commit.sha}` to undo this change.",
+            "",
+            "```diff",
+            diff.rstrip(),
+            "```",
+        ])
+    else:
+        lines.extend([
+            "",
+            "Dream recorded this version, but there is no file diff to display.",
+        ])
+    return "\n".join(lines)
+
+
+def _format_dream_restore_list(commits: list) -> str:
+    lines = [
+        "## Dream Restore",
+        "",
+        "Choose a Dream memory version to restore. Latest first:",
+        "",
+    ]
+    for c in commits:
+        lines.append(f"- `{c.sha}` {c.timestamp} - {c.message.splitlines()[0]}")
+    lines.extend([
+        "",
+        "Preview a version with `/dream-log <sha>` before restoring it.",
+        "Restore a version with `/dream-restore <sha>`.",
+    ])
+    return "\n".join(lines)
 
 
 async def cmd_dream_log(ctx: CommandContext) -> OutboundMessage:
-    """Show what the last Dream changed."""
-    # TODO: Implement dream log retrieval
-    return ctx.make_response("🌙 Dream log not yet implemented.")
+    """Show what the last Dream changed.
+
+    Default: diff of the latest commit (HEAD~1 vs HEAD).
+    With /dream-log <sha>: diff of that specific commit.
+    """
+    store = ctx.loop.memory_consolidator.store
+    git = store.git
+
+    if not git.is_initialized():
+        if store.get_last_dream_cursor() == 0:
+            msg = "Dream has not run yet. Run `/dream`, or wait for the next scheduled Dream cycle."
+        else:
+            msg = "Dream history is not available because memory versioning is not initialized."
+        return ctx.make_response(msg, metadata={"render_as": "text"})
+
+    args = ctx.args.strip()
+
+    if args:
+        sha = args.split()[0]
+        result = git.show_commit_diff(sha)
+        if not result:
+            content = (
+                f"Couldn't find Dream change `{sha}`.\n\n"
+                "Use `/dream-restore` to list recent versions, "
+                "or `/dream-log` to inspect the latest one."
+            )
+        else:
+            commit, diff = result
+            content = _format_dream_log_content(commit, diff, requested_sha=sha)
+    else:
+        commits = git.log(max_entries=1)
+        result = git.show_commit_diff(commits[0].sha) if commits else None
+        if result:
+            commit, diff = result
+            content = _format_dream_log_content(commit, diff)
+        else:
+            content = "Dream memory has no saved versions yet."
+
+    return ctx.make_response(content, metadata={"render_as": "text"})
 
 
 async def cmd_dream_restore(ctx: CommandContext) -> OutboundMessage:
-    """Revert memory to a previous state."""
-    # TODO: Implement dream restore
-    return ctx.make_response("🌙 Dream restore not yet implemented.")
+    """Restore memory files from a previous dream commit.
+
+    Usage:
+        /dream-restore          — list recent commits
+        /dream-restore <sha>    — revert a specific commit
+    """
+    store = ctx.loop.memory_consolidator.store
+    git = store.git
+    if not git.is_initialized():
+        return ctx.make_response(
+            "Dream history is not available because memory versioning is not initialized.",
+        )
+
+    args = ctx.args.strip()
+    if not args:
+        commits = git.log(max_entries=10)
+        if not commits:
+            content = "Dream memory has no saved versions to restore yet."
+        else:
+            content = _format_dream_restore_list(commits)
+    else:
+        sha = args.split()[0]
+        result = git.show_commit_diff(sha)
+        changed_files = _format_changed_files(result[1]) if result else "the tracked memory files"
+        new_sha = git.revert(sha)
+        if new_sha:
+            content = (
+                f"Restored Dream memory to the state before `{sha}`.\n\n"
+                f"- New safety commit: `{new_sha}`\n"
+                f"- Restored files: {changed_files}\n\n"
+                f"Use `/dream-log {new_sha}` to inspect the restore diff."
+            )
+        else:
+            content = (
+                f"Couldn't restore Dream change `{sha}`.\n\n"
+                "It may not exist, or it may be the first saved version with no earlier state to restore."
+            )
+    return ctx.make_response(content, metadata={"render_as": "text"})
 
 
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:

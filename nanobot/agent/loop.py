@@ -15,7 +15,7 @@ from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
-from nanobot.agent.memory import MemoryConsolidator
+from nanobot.agent.memory import Dream, MemoryConsolidator
 from nanobot.agent.pruner import ContextPruner
 from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner
 from nanobot.agent.subagent import SubagentManager
@@ -253,6 +253,11 @@ class AgentLoop:
             build_messages=self.context.build_messages,
             get_tool_definitions=self.tools.get_definitions,
             max_completion_tokens=provider.generation.max_tokens,
+        )
+        self.dream = Dream(
+            store=self._memory_store,
+            provider=provider,
+            model=self.model,
         )
         self._register_default_tools()
         self.commands = CommandRouter()
