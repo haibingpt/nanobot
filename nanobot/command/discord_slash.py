@@ -22,7 +22,7 @@ DISCORD_API_BASE = "https://discord.com/api/v10"
 _CMD_NAME_RE = re.compile(r"^[\w-]{1,32}$")
 
 # builtin 命令名集合，skill 同名时跳过
-_BUILTIN_NAMES = {"status", "new", "stop", "help", "tts", "model"}
+_BUILTIN_NAMES = {"status", "new", "stop", "help", "tts", "model", "dream", "dream-log", "dream-restore"}
 
 
 # ── App ID 提取 ──────────────────────────────────────────────
@@ -113,6 +113,37 @@ def build_builtin_commands(model_choices: list[str] | None = None) -> list[dict]
                     "type": 3,
                     "required": False,
                     "choices": _build_model_choices(model_choices),
+                }
+            ],
+        },
+        {
+            "name": "dream",
+            "description": "Manually trigger Dream memory consolidation",
+            "type": 1,
+        },
+        {
+            "name": "dream-log",
+            "description": "Show what the last Dream changed (or a specific commit)",
+            "type": 1,
+            "options": [
+                {
+                    "name": "sha",
+                    "description": "Optional commit SHA to inspect",
+                    "type": 3,
+                    "required": False,
+                }
+            ],
+        },
+        {
+            "name": "dream-restore",
+            "description": "List recent Dream versions, or restore one by SHA",
+            "type": 1,
+            "options": [
+                {
+                    "name": "sha",
+                    "description": "Optional commit SHA to revert to",
+                    "type": 3,
+                    "required": False,
                 }
             ],
         },
