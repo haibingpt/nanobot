@@ -250,6 +250,12 @@ class AgentLoop:
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
+        # Cross-cutting hooks propagated into subagent runs. Only the rewrite
+        # hook is shared: TraceHook is main-loop-specific (session-keyed log
+        # routing) and caller-supplied hooks are scoped to the main loop.
+        _subagent_extra_hooks: list[AgentHook] = (
+            [self._command_rewrite_hook] if self._command_rewrite_hook else []
+        )
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -259,6 +265,7 @@ class AgentLoop:
             web_config=self.web_config,
             exec_config=exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            extra_hooks=_subagent_extra_hooks,
         )
 
         self._running = False
