@@ -217,8 +217,6 @@ class ExecToolConfig(Base):
     timeout: int = 60
     path_append: str = ""
     sandbox: str = ""  # sandbox backend: "" (none) or "bwrap"
-    rtk_enabled: bool = False   # 开启后命令执行前通过 `rtk rewrite` 压缩，节省 60-90% token
-    rtk_verbose: bool = False   # 开启后将 rewrite 结果记录到 debug 日志
 
 
 class CommandRewriteConfig(Base):

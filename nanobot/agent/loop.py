@@ -318,8 +318,6 @@ class AgentLoop:
                 restrict_to_workspace=self.restrict_to_workspace,
                 extra_allowed_paths=[str(p) for p in self.extra_allowed_paths],
                 path_append=self.exec_config.path_append,
-                rtk_enabled=self.exec_config.rtk_enabled,
-                rtk_verbose=self.exec_config.rtk_verbose,
             ))
         self.tools.register(WebSearchTool(config=self.web_config.search, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
