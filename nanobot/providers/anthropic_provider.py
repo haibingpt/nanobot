@@ -589,6 +589,15 @@ class AnthropicProvider(LLMProvider):
             response = await self._client.messages.create(**kwargs)
             return self._parse_response(response)
         except Exception as e:
+            logger.error(
+                "Anthropic API error: {}. Request: model={}, max_tokens={}, tools_count={}, messages_count={}",
+                e,
+                kwargs.get("model"),
+                kwargs.get("max_tokens"),
+                len(kwargs.get("tools", [])),
+                len(kwargs.get("messages", [])),
+            )
+            logger.debug("Anthropic API error full kwargs: {}", kwargs)
             return LLMResponse(content=f"Error calling LLM: {e}", finish_reason="error")
 
     async def chat_stream(
@@ -615,6 +624,15 @@ class AnthropicProvider(LLMProvider):
                 response = await stream.get_final_message()
             return self._parse_response(response)
         except Exception as e:
+            logger.error(
+                "Anthropic API error (stream): {}. Request: model={}, max_tokens={}, tools_count={}, messages_count={}",
+                e,
+                kwargs.get("model"),
+                kwargs.get("max_tokens"),
+                len(kwargs.get("tools", [])),
+                len(kwargs.get("messages", [])),
+            )
+            logger.debug("Anthropic API error (stream) full kwargs: {}", kwargs)
             return LLMResponse(content=f"Error calling LLM: {e}", finish_reason="error")
 
     def get_default_model(self) -> str:

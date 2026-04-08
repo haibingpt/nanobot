@@ -28,5 +28,17 @@ uv.lock
 # pytest temp dirs
 pytest-of-root/
 
+# weixin channel test temp dirs
+nanobot-weixin-test-*/
+
+# tiktoken cache
+data-gym-cache/
+
+# tmp image files
+tmp*.png
+tmp*.jpg
+tmp*.jpeg
+tmp*.gif
+
 # local docs/plans
 docs/superpowers/

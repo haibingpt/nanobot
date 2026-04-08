@@ -113,7 +113,7 @@ class AzureOpenAIProvider(LLMProvider):
         return body
 
     @staticmethod
-    def _handle_error(e: Exception) -> LLMResponse:
+    def _handle_error(e: Exception, **request_info: Any) -> LLMResponse:
         response = getattr(e, "response", None)
         body = getattr(e, "body", None) or getattr(response, "text", None)
         body_text = str(body).strip() if body is not None else ""
@@ -121,6 +121,15 @@ class AzureOpenAIProvider(LLMProvider):
         retry_after = LLMProvider._extract_retry_after_from_headers(getattr(response, "headers", None))
         if retry_after is None:
             retry_after = LLMProvider._extract_retry_after(msg)
+        logger.error(
+            "Azure OpenAI API error: {}. Request: model={}, max_tokens={}, tools_count={}, messages_count={}",
+            e,
+            request_info.get("model"),
+            request_info.get("max_output_tokens"),
+            len(request_info.get("tools", [])),
+            len(request_info.get("input", [])),
+        )
+        logger.debug("Azure OpenAI API error full request: {}", request_info)
         return LLMResponse(content=msg, finish_reason="error", retry_after=retry_after)
 
     # ------------------------------------------------------------------
@@ -145,7 +154,7 @@ class AzureOpenAIProvider(LLMProvider):
             response = await self._client.responses.create(**body)
             return parse_response_output(response)
         except Exception as e:
-            return self._handle_error(e)
+            return self._handle_error(e, **body)
 
     async def chat_stream(
         self,
@@ -177,7 +186,7 @@ class AzureOpenAIProvider(LLMProvider):
                 reasoning_content=reasoning_content,
             )
         except Exception as e:
-            return self._handle_error(e)
+            return self._handle_error(e, **body)
 
     def get_default_model(self) -> str:
         return self.default_model

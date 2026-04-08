@@ -558,9 +558,18 @@ class OpenAICompatProvider(LLMProvider):
         )
 
     @staticmethod
-    def _handle_error(e: Exception) -> LLMResponse:
+    def _handle_error(e: Exception, **request_info: Any) -> LLMResponse:
         body = getattr(e, "doc", None) or getattr(getattr(e, "response", None), "text", None)
         msg = f"Error: {body.strip()[:500]}" if body and body.strip() else f"Error calling LLM: {e}"
+        logger.error(
+            "OpenAI-compatible API error: {}. Request: model={}, max_tokens={}, tools_count={}, messages_count={}",
+            e,
+            request_info.get("model"),
+            request_info.get("max_tokens"),
+            len(request_info.get("tools", [])),
+            len(request_info.get("messages", [])),
+        )
+        logger.debug("OpenAI-compatible API error full request: {}", request_info)
         return LLMResponse(content=msg, finish_reason="error")
 
     # ------------------------------------------------------------------
@@ -584,7 +593,7 @@ class OpenAICompatProvider(LLMProvider):
         try:
             return self._parse(await self._client.chat.completions.create(**kwargs))
         except Exception as e:
-            return self._handle_error(e)
+            return self._handle_error(e, **kwargs)
 
     async def chat_stream(
         self,
@@ -614,7 +623,7 @@ class OpenAICompatProvider(LLMProvider):
                         await on_content_delta(text)
             return self._parse_chunks(chunks)
         except Exception as e:
-            return self._handle_error(e)
+            return self._handle_error(e, **kwargs)
 
     def get_default_model(self) -> str:
         return self.default_model
