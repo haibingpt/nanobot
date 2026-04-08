@@ -8,7 +8,7 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.agent.hook import AgentHook, AgentHookContext
+from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from nanobot.utils.prompt_templates import render_template
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
@@ -51,6 +51,7 @@ class SubagentManager:
         web_config: "WebToolsConfig | None" = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        extra_hooks: list[AgentHook] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
 
@@ -62,9 +63,21 @@ class SubagentManager:
         self.max_tool_result_chars = max_tool_result_chars
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self._extra_hooks: list[AgentHook] = list(extra_hooks or [])
         self.runner = AgentRunner(provider)
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+
+    def _compose_hook(self, task_id: str) -> AgentHook:
+        """Build the hook chain for a subagent run.
+
+        Rewrite/cross-cutting hooks run BEFORE the logging hook so that
+        debug logs reflect the final (rewritten) arguments.
+        """
+        base = _SubagentHook(task_id)
+        if not self._extra_hooks:
+            return base
+        return CompositeHook([*self._extra_hooks, base])
 
     async def spawn(
         self,
@@ -142,7 +155,7 @@ class SubagentManager:
                 model=self.model,
                 max_iterations=15,
                 max_tool_result_chars=self.max_tool_result_chars,
-                hook=_SubagentHook(task_id),
+                hook=self._compose_hook(task_id),
                 max_iterations_message="Task completed but no final response was generated.",
                 error_message=None,
                 fail_on_tool_error=True,
