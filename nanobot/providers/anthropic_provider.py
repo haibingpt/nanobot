@@ -447,6 +447,11 @@ class AnthropicProvider(LLMProvider):
             )
 
         max_tokens = max(1, max_tokens)
+        # claude-opus-4+ requires extended thinking (temperature must be 1.0).
+        # Auto-enable medium thinking if caller didn't specify reasoning_effort.
+        _OPUS4_PATTERN = re.compile(r"claude-opus-4", re.IGNORECASE)
+        if not reasoning_effort and _OPUS4_PATTERN.search(model_name):
+            reasoning_effort = "medium"
         thinking_enabled = bool(reasoning_effort)
 
         kwargs: dict[str, Any] = {
