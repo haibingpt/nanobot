@@ -183,9 +183,8 @@ class SessionManager:
         session = self._load_layout(layout)
         if session is None:
             layout.ensure_dirs()
-            today = date.today().isoformat()
-            seq = layout.next_session_seq(today)
-            session = Session(key=key, file_path=layout.session_path(today, seq))
+            seq = layout.next_session_seq()
+            session = Session(key=key, file_path=layout.session_path(seq))
         self._cache[key] = session
         return session
 
@@ -194,20 +193,19 @@ class SessionManager:
         key = self._session_key(layout)
         self._cache.pop(key, None)
         layout.ensure_dirs()
-        today = date.today().isoformat()
-        seq = layout.next_session_seq(today)
-        session = Session(key=key, file_path=layout.session_path(today, seq))
+        seq = layout.next_session_seq()
+        session = Session(key=key, file_path=layout.session_path(seq))
         self._cache[key] = session
         return session
 
     def current_llm_log_path(self, layout: WorkspaceLayout) -> Path:
-        """与当前 session 文件对应的 LLM 日志路径。"""
+        """与当前 session 对应的 LLM 日志路径（日志仍按天归档）。"""
         today = date.today().isoformat()
-        path = layout.current_session_path(today)
+        path = layout.current_session_path()
         if path:
             seq = int(path.stem.rsplit("_", 1)[-1])
         else:
-            seq = layout.next_session_seq(today)
+            seq = layout.next_session_seq()
         return layout.llm_log_path(today, seq)
 
     # --- Load ---
@@ -227,8 +225,7 @@ class SessionManager:
         return self._parse_jsonl(path, key)
 
     def _load_layout(self, layout: WorkspaceLayout) -> Session | None:
-        today = date.today().isoformat()
-        path = layout.current_session_path(today)
+        path = layout.current_session_path()
         if not path:
             return None
         key = self._session_key(layout)

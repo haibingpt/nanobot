@@ -47,8 +47,7 @@ class TestSessionManagerSaveLoad:
         session = mgr.get_or_create_from_layout(layout)
         session.add_message("user", "hello")
         mgr.save(session)
-        today = date.today().isoformat()
-        expected = layout.session_path(today, 1)
+        expected = layout.session_path(1)
         assert expected.exists()
 
     def test_load_from_disk(self, tmp_path: Path):
@@ -71,8 +70,7 @@ class TestSessionManagerSaveLoad:
         session.add_message("user", "test")
         mgr.save(session)
 
-        today = date.today().isoformat()
-        path = layout.session_path(today, 1)
+        path = layout.session_path(1)
         with open(path, encoding="utf-8") as f:
             meta_line = json.loads(f.readline())
         assert "_file_path" not in meta_line.get("metadata", {})
@@ -86,8 +84,7 @@ class TestSessionManagerNew:
         session.add_message("user", "old message")
         mgr.save(session)
 
-        today = date.today().isoformat()
-        old_path = layout.session_path(today, 1)
+        old_path = layout.session_path(1)
         assert old_path.exists()
 
         mgr.new_session(layout)
@@ -105,7 +102,7 @@ class TestSessionManagerNew:
         # Save new session to seq 02
         session2.add_message("user", "new message")
         mgr.save(session2)
-        new_path = layout.session_path(today, 2)
+        new_path = layout.session_path(2)
         assert new_path.exists()
 
 

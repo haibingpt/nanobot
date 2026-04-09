@@ -54,25 +54,27 @@ class WorkspaceLayout:
     def agents_md(self) -> Path:
         return self.scope_dir / "AGENTS.md"
 
-    def session_path(self, date: str, seq: int) -> Path:
-        return self.sessions_dir / f"{date}_{self.chat_id}_{seq:02d}.jsonl"
+    def session_path(self, seq: int) -> Path:
+        # Session 文件名不含日期——身份 = chat_id + seq，单一真相源。
+        return self.sessions_dir / f"{self.chat_id}_{seq:04d}.jsonl"
 
     def llm_log_path(self, date: str, seq: int) -> Path:
+        # LLM 日志按天归档是合理的（人类排查维度），保留日期前缀。
         return self.llm_logs_dir / f"{date}_{self.chat_id}_{seq:02d}.jsonl"
 
-    def current_session_path(self, date: str) -> Path | None:
-        """当天最新（序号最大）的 session 文件，不存在返回 None。"""
+    def current_session_path(self) -> Path | None:
+        """chat 最新（序号最大）的 session 文件，不存在返回 None。"""
         if not self.sessions_dir.exists():
             return None
-        prefix = f"{date}_{self.chat_id}_"
+        prefix = f"{self.chat_id}_"
         matches = sorted(self.sessions_dir.glob(f"{prefix}*.jsonl"))
         return matches[-1] if matches else None
 
-    def next_session_seq(self, date: str) -> int:
-        """当天下一个可用序号。"""
+    def next_session_seq(self) -> int:
+        """chat 下一个可用序号（跨天单调递增）。"""
         if not self.sessions_dir.exists():
             return 1
-        prefix = f"{date}_{self.chat_id}_"
+        prefix = f"{self.chat_id}_"
         existing = []
         for p in self.sessions_dir.glob(f"{prefix}*.jsonl"):
             try:

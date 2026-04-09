@@ -31,8 +31,8 @@ class TestWorkspaceLayout:
 
     def test_session_path(self, tmp_path: Path):
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
-        assert layout.session_path("2026-04-01", 1) == (
-            tmp_path / "discord" / "develop" / "sessions" / "2026-04-01_147xxx_01.jsonl"
+        assert layout.session_path(1) == (
+            tmp_path / "discord" / "develop" / "sessions" / "147xxx_0001.jsonl"
         )
 
     def test_llm_log_path(self, tmp_path: Path):
@@ -43,26 +43,27 @@ class TestWorkspaceLayout:
 
     def test_next_session_seq_empty_dir(self, tmp_path: Path):
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
-        assert layout.next_session_seq("2026-04-01") == 1
+        assert layout.next_session_seq() == 1
 
     def test_next_session_seq_existing_files(self, tmp_path: Path):
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
         layout.ensure_dirs()
-        (layout.sessions_dir / "2026-04-01_147xxx_01.jsonl").touch()
-        (layout.sessions_dir / "2026-04-01_147xxx_02.jsonl").touch()
-        assert layout.next_session_seq("2026-04-01") == 3
+        (layout.sessions_dir / "147xxx_0001.jsonl").touch()
+        (layout.sessions_dir / "147xxx_0002.jsonl").touch()
+        assert layout.next_session_seq() == 3
 
-    def test_next_session_seq_different_date_ignored(self, tmp_path: Path):
+    def test_next_session_seq_spans_days(self, tmp_path: Path):
+        """跨天场景：已存在的文件不带日期，下一个序号在全局范围递增。"""
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
         layout.ensure_dirs()
-        (layout.sessions_dir / "2026-03-31_147xxx_01.jsonl").touch()
-        assert layout.next_session_seq("2026-04-01") == 1
+        (layout.sessions_dir / "147xxx_0005.jsonl").touch()
+        assert layout.next_session_seq() == 6
 
     def test_next_session_seq_different_chat_id_ignored(self, tmp_path: Path):
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
         layout.ensure_dirs()
-        (layout.sessions_dir / "2026-04-01_999yyy_01.jsonl").touch()
-        assert layout.next_session_seq("2026-04-01") == 1
+        (layout.sessions_dir / "999yyy_0001.jsonl").touch()
+        assert layout.next_session_seq() == 1
 
     def test_ensure_dirs_creates_both(self, tmp_path: Path):
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
@@ -77,15 +78,25 @@ class TestWorkspaceLayout:
 
     def test_current_session_path_no_files(self, tmp_path: Path):
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
-        assert layout.current_session_path("2026-04-01") is None
+        assert layout.current_session_path() is None
 
     def test_current_session_path_picks_highest_seq(self, tmp_path: Path):
         layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
         layout.ensure_dirs()
-        (layout.sessions_dir / "2026-04-01_147xxx_01.jsonl").touch()
-        (layout.sessions_dir / "2026-04-01_147xxx_03.jsonl").touch()
-        assert layout.current_session_path("2026-04-01") == (
-            layout.sessions_dir / "2026-04-01_147xxx_03.jsonl"
+        (layout.sessions_dir / "147xxx_0001.jsonl").touch()
+        (layout.sessions_dir / "147xxx_0003.jsonl").touch()
+        assert layout.current_session_path() == (
+            layout.sessions_dir / "147xxx_0003.jsonl"
+        )
+
+    def test_current_session_path_survives_date_boundary(self, tmp_path: Path):
+        """跨天 reload 关键回归：文件名不含日期，load 不受 date.today() 影响。"""
+        layout = WorkspaceLayout(workspace=tmp_path, channel="discord", channel_name="develop", chat_id="147xxx")
+        layout.ensure_dirs()
+        (layout.sessions_dir / "147xxx_0007.jsonl").touch()
+        # 即便今天是任何日期，都应找到这个文件
+        assert layout.current_session_path() == (
+            layout.sessions_dir / "147xxx_0007.jsonl"
         )
 
 
