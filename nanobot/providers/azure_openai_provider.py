@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from loguru import logger
 from openai import AsyncOpenAI
 
 from nanobot.providers.base import LLMProvider, LLMResponse

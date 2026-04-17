@@ -387,6 +387,8 @@ class LLMProvider(ABC):
         return LLMResponse(
             content=msg,
             finish_reason="error",
+            # Legacy alias — keep populated so existing retry policy still works.
+            retry_after=retry_after_s,
             error_status_code=int(status_code) if status_code is not None else None,
             error_kind=error_kind,
             error_type=type_token,

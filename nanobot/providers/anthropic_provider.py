@@ -449,12 +449,17 @@ class AnthropicProvider(LLMProvider):
 
         max_tokens = max(1, max_tokens)
 
-        # Opus 4.6 / Sonnet 4.6+ use adaptive thinking — auto-enable if caller
-        # didn't specify reasoning_effort.
+        # Opus 4.6+ / Sonnet 4.6+ use adaptive thinking — auto-enable if caller
+        # didn't specify reasoning_effort. Defaults are tuned for intelligence-
+        # sensitive workloads per Anthropic guidance:
+        #   Opus   -> "xhigh" (full reasoning depth, recommended for coding/agentic)
+        #   Sonnet -> "high"  (Sonnet caps at high)
         _ADAPTIVE_PATTERN = re.compile(r"claude-(opus|sonnet)-4[-.]\d+", re.IGNORECASE)
+        _OPUS_PATTERN = re.compile(r"claude-opus-4[-.]\d+", re.IGNORECASE)
         _adaptive = bool(_ADAPTIVE_PATTERN.search(model_name))
+        _is_opus = bool(_OPUS_PATTERN.search(model_name))
         if not reasoning_effort and _adaptive:
-            reasoning_effort = "medium"
+            reasoning_effort = "xhigh" if _is_opus else "high"
         thinking_enabled = bool(reasoning_effort)
 
         kwargs: dict[str, Any] = {
@@ -477,14 +482,18 @@ class AnthropicProvider(LLMProvider):
             kwargs["system"] = system
 
         if thinking_enabled:
-            effort = (reasoning_effort or "medium").lower()
+            effort = (reasoning_effort or ("xhigh" if _is_opus else "high")).lower()
             if _adaptive:
                 # Opus 4.6+ / Sonnet 4.6+: adaptive thinking — Claude decides when/how much to think.
                 # effort "max" / "xhigh" is only valid on Opus 4.6+.
-                _OPUS_PATTERN = re.compile(r"claude-opus-4[-.]\d+", re.IGNORECASE)
-                if effort == "max" and not _OPUS_PATTERN.search(model_name):
-                    effort = "high"  # sonnet caps at high, not max
-                kwargs["thinking"] = {"type": "adaptive"}
+                if effort in ("max", "xhigh") and not _is_opus:
+                    effort = "high"  # sonnet caps at high
+                kwargs["thinking"] = {
+                    "type": "adaptive",
+                    # Explicit opt-in: Opus 4.7+ defaults to "omitted" which hides
+                    # thinking from the response. We always want summaries visible.
+                    "display": "summarized",
+                }
                 kwargs["output_config"] = {"effort": effort}
                 kwargs["max_tokens"] = max_tokens
                 # temperature must NOT be set with adaptive thinking

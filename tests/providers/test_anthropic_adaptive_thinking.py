@@ -19,24 +19,38 @@ def _build(model: str, reasoning_effort: str | None = None) -> dict:
     )
 
 
+# Per Anthropic guidance: intelligence-sensitive workloads should use high+ effort.
+# Opus 4.x supports 'xhigh', Sonnet caps at 'high'.
+_OPUS_DEFAULT_EFFORT = "xhigh"
+_SONNET_DEFAULT_EFFORT = "high"
+
+
 @pytest.mark.parametrize(
-    "model",
+    "model,expected_effort",
     [
-        "claude-opus-4-6-20251010",
-        "claude-opus-4.7",
-        "claude-opus-4.7-20251010",
-        "claude-sonnet-4-6-20250514",
-        "claude-sonnet-4.7",
-        "claude-sonnet-4.7-20251101",
+        ("claude-opus-4-6-20251010", _OPUS_DEFAULT_EFFORT),
+        ("claude-opus-4.7", _OPUS_DEFAULT_EFFORT),
+        ("claude-opus-4.7-20251010", _OPUS_DEFAULT_EFFORT),
+        ("claude-sonnet-4-6-20250514", _SONNET_DEFAULT_EFFORT),
+        ("claude-sonnet-4.7", _SONNET_DEFAULT_EFFORT),
+        ("claude-sonnet-4.7-20251101", _SONNET_DEFAULT_EFFORT),
     ],
 )
-def test_adaptive_thinking_auto_enabled_for_4x(model: str) -> None:
-    """Claude 4.x models should auto-enable adaptive thinking when no reasoning_effort is given."""
+def test_adaptive_thinking_auto_enabled_for_4x(model: str, expected_effort: str) -> None:
+    """Claude 4.x models should auto-enable adaptive thinking with high+ effort default."""
     kwargs = _build(model, reasoning_effort=None)
-    assert kwargs.get("thinking") == {"type": "adaptive"}
-    assert "output_config" in kwargs
-    assert kwargs["output_config"]["effort"] == "medium"
+    assert kwargs.get("thinking") == {"type": "adaptive", "display": "summarized"}
+    assert kwargs["output_config"]["effort"] == expected_effort
     assert "temperature" not in kwargs
+
+
+def test_adaptive_thinking_explicit_display_summarized() -> None:
+    """All adaptive calls must request summarized thinking — Opus 4.7 defaults to omitted."""
+    for model in ("claude-opus-4.7", "claude-sonnet-4.6", "claude-opus-4-6"):
+        kwargs = _build(model, reasoning_effort="medium")
+        assert kwargs["thinking"]["display"] == "summarized", (
+            f"{model} must opt-in to summarized display"
+        )
 
 
 def test_non_adaptive_model_uses_budget_thinking() -> None:
@@ -67,7 +81,7 @@ def test_opus_accepts_xhigh_effort() -> None:
     ],
 )
 def test_sonnet_downgrades_max_to_high(model: str) -> None:
-    """Non-Opus 4.x should downgrade 'max' to 'high'."""
+    """Non-Opus 4.x should downgrade 'max' to 'high' (Sonnet caps at high)."""
     kwargs = _build(model, reasoning_effort="max")
     assert kwargs["output_config"]["effort"] == "high"
 
@@ -79,10 +93,10 @@ def test_sonnet_downgrades_max_to_high(model: str) -> None:
         "claude-sonnet-4-7-20251101",
     ],
 )
-def test_sonnet_keeps_xhigh(model: str) -> None:
-    """Non-Opus 4.x keeps 'xhigh' as-is (SDK will validate)."""
+def test_sonnet_downgrades_xhigh_to_high(model: str) -> None:
+    """Sonnet caps at 'high' — both 'xhigh' and 'max' should downgrade."""
     kwargs = _build(model, reasoning_effort="xhigh")
-    assert kwargs["output_config"]["effort"] == "xhigh"
+    assert kwargs["output_config"]["effort"] == "high"
 
 
 def test_no_thinking_when_reasoning_disabled() -> None:
