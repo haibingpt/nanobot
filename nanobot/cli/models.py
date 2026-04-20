@@ -15,6 +15,8 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 _KNOWN_CONTEXT_WINDOWS: dict[str, int] = {
+    # Anthropic Claude 4.7
+    "claude-opus-4-7": 1_000_000,
     # Anthropic Claude 4.6
     "claude-opus-4-6": 1_000_000,
     "claude-sonnet-4-6": 1_000_000,

@@ -13,6 +13,7 @@ from nanobot.command.router import CommandContext, CommandRouter
 if TYPE_CHECKING:
     from nanobot.bus.events import OutboundMessage
 from nanobot.utils.helpers import build_status_content
+from nanobot.utils.restart import set_restart_notice_to_env
 
 
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
@@ -35,6 +36,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
 async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
     """Restart the process in-place via os.execv."""
     msg = ctx.msg
+    set_restart_notice_to_env(channel=msg.channel, chat_id=msg.chat_id)
 
     async def _do_restart():
         await asyncio.sleep(1)
@@ -55,6 +57,21 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
         pass
     if ctx_est <= 0:
         ctx_est = loop._last_usage.get("prompt_tokens", 0)
+
+    # Fetch web search provider usage (best-effort, never blocks the response)
+    search_usage_text: str | None = None
+    try:
+        from nanobot.utils.searchusage import fetch_search_usage
+        web_cfg = getattr(loop, "web_config", None)
+        search_cfg = getattr(web_cfg, "search", None) if web_cfg else None
+        if search_cfg is not None:
+            provider = getattr(search_cfg, "provider", "duckduckgo")
+            api_key = getattr(search_cfg, "api_key", "") or None
+            usage = await fetch_search_usage(provider=provider, api_key=api_key)
+            search_usage_text = usage.format()
+    except Exception:
+        pass  # Never let usage fetch break /status
+
     return ctx.make_response(
         build_status_content(
             version=__version__, model=loop.model,
@@ -62,6 +79,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
             context_window_tokens=loop.context_window_tokens,
             session_msg_count=len(session.get_history(max_messages=0)),
             context_tokens_estimate=ctx_est,
+            search_usage_text=search_usage_text,
         ),
         metadata={"render_as": "text"},
     )
