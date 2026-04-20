@@ -254,16 +254,48 @@ class AgentLoop:
         _subagent_extra_hooks: list[AgentHook] = (
             [self._command_rewrite_hook] if self._command_rewrite_hook else []
         )
+
+        # Subagent 可选使用独立 provider + model（配置化模型分层）。
+        # 未配置时复用主 agent provider，行为零变化。
+        subagent_provider = provider
+        subagent_model = self.model
+        subagent_reasoning: str | None = None
+        subagent_max_tokens: int | None = None
+        if self._config is not None:
+            defaults = self._config.agents.defaults
+            if defaults.subagent_model:
+                from nanobot.nanobot import _make_single_provider
+                try:
+                    subagent_provider = _make_single_provider(
+                        self._config, defaults.subagent_model
+                    )
+                    subagent_model = defaults.subagent_model
+                    subagent_reasoning = defaults.subagent_reasoning_effort
+                    subagent_max_tokens = defaults.subagent_max_tokens
+                    logger.info(
+                        "Subagent using independent provider: model={}, "
+                        "reasoning={}, max_tokens={}",
+                        subagent_model, subagent_reasoning, subagent_max_tokens,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to build subagent provider for {}: {}. "
+                        "Falling back to main agent provider.",
+                        defaults.subagent_model, e,
+                    )
+
         self.subagents = SubagentManager(
-            provider=provider,
+            provider=subagent_provider,
             workspace=workspace,
             bus=bus,
-            model=self.model,
+            model=subagent_model,
             max_tool_result_chars=self.max_tool_result_chars,
             web_config=self.web_config,
             exec_config=exec_config,
             restrict_to_workspace=restrict_to_workspace,
             extra_hooks=_subagent_extra_hooks,
+            reasoning_effort=subagent_reasoning,
+            max_tokens=subagent_max_tokens,
         )
 
         self._running = False

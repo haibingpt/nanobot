@@ -1,17 +1,20 @@
 """Tests for SubagentManager model-tier override.
 
 Verifies that reasoning_effort / max_tokens passed at construction time
-propagate into AgentRunSpec when a subagent task is executed.
+propagate into AgentRunSpec when a subagent task is executed, and that
+AgentLoop wires an independent provider when config.subagent_model is set.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nanobot.agent.loop import AgentLoop
 from nanobot.agent.subagent import SubagentManager
+from nanobot.config.schema import Config, ExecToolConfig
 
 
 def _mk_manager(
@@ -86,3 +89,74 @@ async def test_run_spec_includes_reasoning_and_max_tokens(tmp_path, monkeypatch)
     assert spec.model == "subagent-model"
     assert spec.reasoning_effort == "low"
     assert spec.max_tokens == 4096
+
+
+# ---------------------------------------------------------------------------
+# AgentLoop wiring integration tests
+# ---------------------------------------------------------------------------
+
+def _mk_loop(workspace: Path, config: Config | None = None) -> AgentLoop:
+    bus = MagicMock()
+    provider = MagicMock()
+    provider.get_default_model.return_value = "main-model"
+    provider.generation = MagicMock(max_tokens=4096)
+    return AgentLoop(
+        bus=bus,
+        provider=provider,
+        workspace=workspace,
+        exec_config=ExecToolConfig(enable=False),
+        config=config,
+    )
+
+
+def test_loop_no_subagent_model_reuses_main_provider(tmp_path: Path):
+    """未配置 subagent_model → subagents 复用主 agent provider / model。"""
+    config = Config()
+    loop = _mk_loop(tmp_path, config=config)
+    assert loop.subagents.provider is loop.provider
+    assert loop.subagents.model == loop.model
+    assert loop.subagents.reasoning_effort is None
+    assert loop.subagents.max_tokens is None
+
+
+def test_loop_with_subagent_model_uses_independent_provider(tmp_path: Path):
+    """配置 subagent_model → 用 _make_single_provider 构造独立 provider。"""
+    config = Config()
+    config.agents.defaults.subagent_model = "anthropic/claude-haiku-4-5"
+    config.agents.defaults.subagent_reasoning_effort = "low"
+    config.agents.defaults.subagent_max_tokens = 4096
+
+    fake_subagent_provider = MagicMock(name="subagent_provider")
+    fake_subagent_provider.get_default_model.return_value = "anthropic/claude-haiku-4-5"
+
+    with patch(
+        "nanobot.nanobot._make_single_provider",
+        return_value=fake_subagent_provider,
+    ) as mock_make:
+        loop = _mk_loop(tmp_path, config=config)
+
+    mock_make.assert_called_once()
+    # positional args: (config, model)
+    args, _ = mock_make.call_args
+    assert args[1] == "anthropic/claude-haiku-4-5"
+
+    assert loop.subagents.provider is fake_subagent_provider
+    assert loop.subagents.model == "anthropic/claude-haiku-4-5"
+    assert loop.subagents.reasoning_effort == "low"
+    assert loop.subagents.max_tokens == 4096
+
+
+def test_loop_subagent_provider_build_failure_falls_back(tmp_path: Path):
+    """subagent provider 构造失败 → warn + 回退主 agent provider，不崩。"""
+    config = Config()
+    config.agents.defaults.subagent_model = "bogus/does-not-exist"
+
+    with patch(
+        "nanobot.nanobot._make_single_provider",
+        side_effect=ValueError("no provider for bogus/does-not-exist"),
+    ):
+        loop = _mk_loop(tmp_path, config=config)
+
+    # 回退到主 provider
+    assert loop.subagents.provider is loop.provider
+    assert loop.subagents.model == loop.model
