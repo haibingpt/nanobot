@@ -148,7 +148,7 @@ async def test_hook_fail_safe_on_subprocess_error():
 
 @pytest.mark.asyncio
 async def test_hook_fail_safe_on_nonzero_returncode():
-    """rtk 返回非零退出码时原命令透传。"""
+    """rtk 返回非零退出码且无 stdout 时原命令透传。"""
     hook = CommandRewriteHook(enabled=True)
     tc = _exec_tc("git status")
     ctx = _ctx([tc])
@@ -156,6 +156,38 @@ async def test_hook_fail_safe_on_nonzero_returncode():
     with patch(
         "asyncio.create_subprocess_exec",
         AsyncMock(return_value=_mock_proc(b"", returncode=1)),
+    ):
+        await hook.before_execute_tools(ctx)
+
+    assert tc.arguments["command"] == "git status"
+
+
+@pytest.mark.asyncio
+async def test_hook_accepts_returncode_3_rtk_037_plus():
+    """rtk 0.37+ 用退出码 3 表示成功改写（契约漂移），仍需接受。"""
+    hook = CommandRewriteHook(enabled=True)
+    tc = _exec_tc("ls -la /root/workspace")
+    ctx = _ctx([tc])
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        AsyncMock(return_value=_mock_proc(b"rtk ls -la /root/workspace\n", returncode=3)),
+    ):
+        await hook.before_execute_tools(ctx)
+
+    assert tc.arguments["command"] == "rtk ls -la /root/workspace"
+
+
+@pytest.mark.asyncio
+async def test_hook_fail_safe_on_unexpected_returncode():
+    """非 0/1/3 的退出码（真正的错误）即使有 stdout 也透传。"""
+    hook = CommandRewriteHook(enabled=True)
+    tc = _exec_tc("git status")
+    ctx = _ctx([tc])
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        AsyncMock(return_value=_mock_proc(b"garbage output\n", returncode=2)),
     ):
         await hook.before_execute_tools(ctx)
 

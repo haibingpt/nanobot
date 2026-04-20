@@ -74,7 +74,11 @@ class CommandRewriteHook(AgentHook):
             stdout, _ = await asyncio.wait_for(
                 proc.communicate(), timeout=self._timeout
             )
-            if proc.returncode == 0 and stdout:
+            # rtk's documented contract: exit 0 = rewrite produced; exit 1 = no
+            # rewrite available. rtk 0.37+ ships exit code 3 for a successful
+            # rewrite (contract drift). Accept both 0 and 3 to survive across
+            # rtk versions; require non-empty stdout in either case.
+            if proc.returncode in (0, 3) and stdout:
                 return stdout.decode().strip()
         except Exception as e:  # noqa: BLE001 — fail-safe is the whole point
             logger.debug("rtk rewrite failed (passthrough): {}", e)
