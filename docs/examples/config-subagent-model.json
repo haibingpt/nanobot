@@ -1,0 +1,15 @@
+{
+  "_description": "示例：主 agent 跑 Opus 思考，subagent 跑 Haiku 做日志/grep/读文件等窄任务，响应更快、成本更低。不配 subagentModel 则 subagent 继续复用主 agent provider（向后兼容）。",
+  "providers": {
+    "anthropic": {
+      "apiKey": "sk-ant-..."
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "anthropic/claude-opus-4-5",
+      "subagentModel": "anthropic/claude-haiku-4-5",
+      "subagentMaxTokens": 4096
+    }
+  }
+}
