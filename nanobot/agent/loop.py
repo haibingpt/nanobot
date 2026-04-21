@@ -407,13 +407,17 @@ class AgentLoop:
     def _set_tool_context(
         self, channel: str, chat_id: str, message_id: str | None = None,
         session_metadata: dict | None = None,
+        layout: "WorkspaceLayout | None" = None,
     ) -> None:
         """Update context for all tools that need routing info."""
+        subagent_log_dir = layout.llm_logs_dir if layout else None
         for name in ("message", "spawn", "cron"):
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
                     if name == "message":
                         tool.set_context(channel, chat_id, message_id, session_metadata=session_metadata)
+                    elif name == "spawn":
+                        tool.set_context(channel, chat_id, log_dir=subagent_log_dir)
                     else:
                         tool.set_context(channel, chat_id)
 
@@ -656,7 +660,7 @@ class AgentLoop:
             session = self.sessions.get_or_create_from_layout(layout) if layout else self.sessions.get_or_create(key)
             self._update_runtime_metadata(session, ctx)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
-            self._set_tool_context(ctx.channel, ctx.chat_id, ctx.message_id)
+            self._set_tool_context(ctx.channel, ctx.chat_id, ctx.message_id, layout=layout)
             history = session.get_history(max_messages=0)
             if ctx.sender_id == "subagent":
                 current_role = "user"
@@ -712,7 +716,7 @@ class AgentLoop:
 
         self._set_tool_context(
             ctx.channel, ctx.chat_id, ctx.message_id,
-            session_metadata=session.metadata,
+            session_metadata=session.metadata, layout=layout,
         )
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
