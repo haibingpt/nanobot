@@ -24,6 +24,13 @@
   - `subagentMaxTokens: int | None = None` — 可选输出 token 上限，不配则继承主 agent 行为。
   - Provider 构造失败时 warn + 回退主 agent provider，不阻断启动。
   - 适用场景：主 agent 跑强模型做规划/写作，subagent 跑快/便宜模型做日志分析、文件读取、pattern matching。
+- TraceHook 的 llm_logs 每条 entry 新增 `model` 字段，记录本次 LLM 调用使用的模型名。用于验证 subagent 模型分层等多模型场景是否真的按预期路由。`AgentHookContext` 同步新增 `model` 属性由 runner 填充。
+- Subagent 执行现在会产出独立的 llm_logs 文件：
+  - 路径：`<scope>/llm_logs/subagent_<date>_<task_id>.jsonl`（通过 `layout.llm_logs_dir` 从父 session 继承）
+  - cli / 无 layout 场景回退到 `<workspace>/subagent_logs/`
+  - 每次 spawn 新建 TraceHook 实例 + 独立文件，并发 subagent 之间天然隔离，无锁
+  - 不创建 subagent 专属 session 或 sessions 目录——纯日志观测
+  - `SpawnTool.set_context` 与 `AgentLoop._set_tool_context` 新增可选 `log_dir` / `layout` 参数承载日志路径
 
 ### Migration
 
