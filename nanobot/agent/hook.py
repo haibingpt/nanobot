@@ -24,6 +24,7 @@ class AgentHookContext:
     final_content: str | None = None
     stop_reason: str | None = None
     error: str | None = None
+    model: str | None = None  # per-run model name for TraceHook / metrics
 
 
 class AgentHook:
@@ -115,6 +116,7 @@ class TraceHook(AgentHook):
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "session_key": self._session_key,
+            "model": context.model,
             "iteration": context.iteration,
             "stop_reason": context.stop_reason,
             "elapsed_ms": elapsed_ms,

@@ -114,7 +114,7 @@ class AgentRunner:
                     exc,
                 )
                 messages_for_model = messages
-            context = AgentHookContext(iteration=iteration, messages=messages)
+            context = AgentHookContext(iteration=iteration, messages=messages, model=spec.model)
             await hook.before_iteration(context)
             llm_start = time.monotonic()
             response = await self._request_model(spec, messages_for_model, hook, context)
