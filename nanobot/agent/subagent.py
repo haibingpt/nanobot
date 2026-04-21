@@ -90,6 +90,7 @@ class SubagentManager:
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
+        log_dir: Path | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         task_id = str(uuid.uuid4())[:8]
@@ -97,7 +98,7 @@ class SubagentManager:
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin)
+            self._run_subagent(task_id, task, display_label, origin, log_dir)
         )
         self._running_tasks[task_id] = bg_task
         if session_key:
@@ -121,11 +122,28 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
+        log_dir: Path | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
 
         try:
+            # 构造 per-spawn TraceHook + 独立 log 路径
+            from datetime import date
+            from nanobot.agent.hook import TraceHook
+
+            if log_dir is None:
+                resolved_log_dir = self.workspace / "subagent_logs"
+            else:
+                resolved_log_dir = log_dir
+            resolved_log_dir.mkdir(parents=True, exist_ok=True)
+            today = date.today().isoformat()
+            log_path = resolved_log_dir / f"subagent_{today}_{task_id}.jsonl"
+            subagent_trace = TraceHook(log_path=log_path)
+            subagent_trace.session_key = (
+                f"subagent:{task_id}:{origin['channel']}:{origin['chat_id']}"
+            )
+
             # Build subagent tools (no message tool, no spawn tool)
             tools = ToolRegistry()
             allowed_dir = self.workspace if (self.restrict_to_workspace or self.exec_config.sandbox) else None
@@ -153,13 +171,16 @@ class SubagentManager:
                 {"role": "user", "content": task},
             ]
 
+            base_hook = self._compose_hook(task_id)
+            composed_hook = CompositeHook([base_hook, subagent_trace])
+
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=messages,
                 tools=tools,
                 model=self.model,
                 max_iterations=15,
                 max_tool_result_chars=self.max_tool_result_chars,
-                hook=self._compose_hook(task_id),
+                hook=composed_hook,
                 max_iterations_message="Task completed but no final response was generated.",
                 error_message=None,
                 fail_on_tool_error=True,
