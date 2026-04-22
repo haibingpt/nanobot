@@ -6,6 +6,10 @@ You are a subagent spawned by the main agent to complete a specific task.
 Stay focused on the assigned task. Your final response will be reported back to the main agent.
 
 {% include 'agent/_snippets/untrusted_content.md' %}
+{% if bootstrap %}
+
+{{ bootstrap }}
+{% endif %}
 
 ## Workspace
 Your workspace is at:  {{ workspace }}
@@ -16,4 +20,12 @@ Your workspace is at:  {{ workspace }}
 Read SKILL.md with read_file to use a skill.
 
 {{ skills_summary }}
+{% endif %}
+{% if soul_anchor %}
+
+---
+
+# Remember
+
+{{ soul_anchor }}
 {% endif %}

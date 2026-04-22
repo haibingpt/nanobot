@@ -359,11 +359,29 @@ class SubagentManager:
 
         time_ctx = ContextBuilder._build_runtime_context(None, None)
         skills_summary = SkillsLoader(self.workspace).build_skills_summary()
+
+        # Load bootstrap files (SOUL.md, USER.md, AGENTS.md, TOOLS.md)
+        # so subagents inherit the same persona and behavioral guidelines.
+        bootstrap_parts = []
+        for filename in ContextBuilder.BOOTSTRAP_FILES:
+            path = self.workspace / filename
+            if path.exists():
+                content = path.read_text(encoding="utf-8").strip()
+                if content:
+                    bootstrap_parts.append(f"## {filename}\n\n{content}")
+        bootstrap = "\n\n".join(bootstrap_parts)
+
+        # Soul anchor: repeat SOUL.md at tail for U-shaped attention reinforcement
+        soul_path = self.workspace / "SOUL.md"
+        soul_anchor = soul_path.read_text(encoding="utf-8").strip() if soul_path.exists() else ""
+
         return render_template(
             "agent/subagent_system.md",
             time_ctx=time_ctx,
             workspace=str(self.workspace),
             skills_summary=skills_summary or "",
+            bootstrap=bootstrap,
+            soul_anchor=soul_anchor,
         )
 
     async def cancel_by_session(self, session_key: str) -> int:
