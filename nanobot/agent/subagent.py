@@ -371,17 +371,12 @@ class SubagentManager:
                     bootstrap_parts.append(f"## {filename}\n\n{content}")
         bootstrap = "\n\n".join(bootstrap_parts)
 
-        # Soul anchor: repeat SOUL.md at tail for U-shaped attention reinforcement
-        soul_path = self.workspace / "SOUL.md"
-        soul_anchor = soul_path.read_text(encoding="utf-8").strip() if soul_path.exists() else ""
-
         return render_template(
             "agent/subagent_system.md",
             time_ctx=time_ctx,
             workspace=str(self.workspace),
             skills_summary=skills_summary or "",
             bootstrap=bootstrap,
-            soul_anchor=soul_anchor,
         )
 
     async def cancel_by_session(self, session_key: str) -> int:
