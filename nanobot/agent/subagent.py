@@ -30,20 +30,6 @@ class _SubagentHook(AgentHook):
     def __init__(self, task_id: str) -> None:
         self._task_id = task_id
 
-    async def before_iteration(self, context: AgentHookContext) -> None:
-        logger.info(
-            "Subagent [{}] LLM request → model={} messages={}",
-            self._task_id, context.model, len(context.messages),
-        )
-
-    async def after_iteration(self, context: AgentHookContext) -> None:
-        resp = context.response
-        if resp:
-            logger.info(
-                "Subagent [{}] LLM response ← model={} finish_reason={} usage={}",
-                self._task_id, context.model, resp.finish_reason, context.usage,
-            )
-
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         for tool_call in context.tool_calls:
             args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
@@ -277,6 +263,7 @@ class SubagentManager:
                 pruner=self._pruner,
                 context_window_tokens=self._context_window_tokens,
                 session_key=session_key,
+                log_label=f"Subagent {task_id}",
             ))
             if result.stop_reason == "tool_error":
                 await self._announce_result(

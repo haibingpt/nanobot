@@ -52,6 +52,7 @@ class AgentRunSpec:
     max_iterations_message: str | None = None
     concurrent_tools: bool = False
     fail_on_tool_error: bool = False
+    log_label: str | None = None
     workspace: Path | None = None
     session_key: str | None = None
     context_window_tokens: int | None = None
@@ -116,15 +117,13 @@ class AgentRunner:
                 messages_for_model = messages
             context = AgentHookContext(iteration=iteration, messages=messages, model=spec.model)
             await hook.before_iteration(context)
-            llm_start = time.monotonic()
-            response = await self._request_model(spec, messages_for_model, hook, context)
-            llm_elapsed = int((time.monotonic() - llm_start) * 1000)
+            response, llm_elapsed = await self._request_model(
+                spec, messages_for_model,
+                tools=spec.tools.get_definitions(),
+                hook=hook, context=context,
+            )
             total_llm_ms += llm_elapsed
             raw_usage = self._usage_dict(response.usage)
-            logger.info(
-                "LLM response ← model={} finish_reason={} usage={} elapsed_ms={}",
-                spec.model, response.finish_reason, raw_usage, llm_elapsed,
-            )
             context.response = response
             context.usage = dict(raw_usage)
             context.tool_calls = list(response.tool_calls)
@@ -212,7 +211,8 @@ class AgentRunner:
                 )
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=False)
-                response = await self._request_finalization_retry(spec, messages_for_model)
+                response, retry_llm_ms = await self._request_finalization_retry(spec, messages_for_model)
+                total_llm_ms += retry_llm_ms
                 retry_usage = self._usage_dict(response.usage)
                 self._accumulate_usage(usage, retry_usage)
                 raw_usage = self._merge_usage(raw_usage, retry_usage)
@@ -319,47 +319,43 @@ class AgentRunner:
         self,
         spec: AgentRunSpec,
         messages: list[dict[str, Any]],
-        hook: AgentHook,
-        context: AgentHookContext,
-    ):
-        tools = spec.tools.get_definitions()
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        hook: AgentHook | None = None,
+        context: AgentHookContext | None = None,
+    ) -> tuple[Any, int]:
+        """单一 I/O 边界：req log → provider call → resp log → (response, elapsed_ms)。"""
+        label = f"[{spec.log_label}] " if spec.log_label else ""
         logger.info(
-            "LLM request → model={} messages={} last=[{}] {}",
-            spec.model, len(messages), *self._last_message_preview(messages),
+            "{}LLM request → model={} messages={} last=[{}] {}",
+            label, spec.model, len(messages), *self._last_message_preview(messages),
         )
-        kwargs = self._build_request_kwargs(
-            spec,
-            messages,
-            tools=tools,
-        )
-        if hook.wants_streaming():
+        kwargs = self._build_request_kwargs(spec, messages, tools=tools)
+        start = time.monotonic()
+        if hook and context and hook.wants_streaming():
             async def _stream(delta: str) -> None:
                 await hook.on_stream(context, delta)
-
-            return await self.provider.chat_stream_with_retry(
-                **kwargs,
-                on_content_delta=_stream,
+            response = await self.provider.chat_stream_with_retry(
+                **kwargs, on_content_delta=_stream,
             )
-        return await self.provider.chat_with_retry(**kwargs)
+        else:
+            response = await self.provider.chat_with_retry(**kwargs)
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        logger.info(
+            "{}LLM response ← model={} finish_reason={} usage={} elapsed_ms={}",
+            label, spec.model, response.finish_reason,
+            self._usage_dict(response.usage), elapsed_ms,
+        )
+        return response, elapsed_ms
 
     async def _request_finalization_retry(
         self,
         spec: AgentRunSpec,
         messages: list[dict[str, Any]],
-    ):
+    ) -> tuple[Any, int]:
         retry_messages = list(messages)
         retry_messages.append(build_finalization_retry_message())
-        logger.info(
-            "LLM finalization retry → model={} messages={}",
-            spec.model, len(retry_messages),
-        )
-        kwargs = self._build_request_kwargs(spec, retry_messages, tools=None)
-        response = await self.provider.chat_with_retry(**kwargs)
-        logger.info(
-            "LLM finalization retry ← model={} finish_reason={} usage={}",
-            spec.model, response.finish_reason, self._usage_dict(response.usage),
-        )
-        return response
+        return await self._request_model(spec, retry_messages)
 
     @staticmethod
     def _last_message_preview(messages: list[dict[str, Any]]) -> tuple[str, str]:
