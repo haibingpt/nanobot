@@ -323,18 +323,9 @@ class AgentRunner:
         context: AgentHookContext,
     ):
         tools = spec.tools.get_definitions()
-        last_msg = messages[-1] if messages else {}
-        last_role = last_msg.get("role", "?")
-        last_preview = ""
-        if last_role == "tool":
-            last_preview = f"tool:{last_msg.get('name', '?')}"
-        else:
-            raw = last_msg.get("content", "")
-            text = raw if isinstance(raw, str) else str(raw)[:120]
-            last_preview = text[:120]
         logger.info(
-            "LLM request → model={} messages={} tools={} last=[{}] {}",
-            spec.model, len(messages), len(tools), last_role, last_preview,
+            "LLM request → model={} messages={} last=[{}] {}",
+            spec.model, len(messages), *self._last_message_preview(messages),
         )
         kwargs = self._build_request_kwargs(
             spec,
@@ -369,6 +360,27 @@ class AgentRunner:
             spec.model, response.finish_reason, self._usage_dict(response.usage),
         )
         return response
+
+    @staticmethod
+    def _last_message_preview(messages: list[dict[str, Any]]) -> tuple[str, str]:
+        """Return (role, preview) for the last message in the chain."""
+        if not messages:
+            return ("?", "")
+        msg = messages[-1]
+        role = msg.get("role", "?")
+        content = msg.get("content", "")
+        if role == "tool":
+            name = msg.get("name", "?")
+            text = content if isinstance(content, str) else str(content)
+            return (role, f"{name}: {text[:120]}")
+        if isinstance(content, str):
+            return (role, content[:120])
+        if isinstance(content, list):
+            # 多 block 消息，取第一个 text block
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    return (role, block.get("text", "")[:120])
+        return (role, str(content)[:120])
 
     @staticmethod
     def _usage_dict(usage: dict[str, Any] | None) -> dict[str, int]:
