@@ -261,8 +261,10 @@ class AgentLoop:
         subagent_model = self.model
         subagent_reasoning: str | None = None
         subagent_max_tokens: int | None = None
+        subagent_timeout_seconds: float = 900.0
         if self._config is not None:
             defaults = self._config.agents.defaults
+            subagent_timeout_seconds = defaults.subagent_timeout_seconds
             if defaults.subagent_model:
                 from nanobot.nanobot import _make_single_provider
                 try:
@@ -296,6 +298,12 @@ class AgentLoop:
             extra_hooks=_subagent_extra_hooks,
             reasoning_effort=subagent_reasoning,
             max_tokens=subagent_max_tokens,
+            max_iterations=self.max_iterations,
+            # Parity 依赖：共享主 loop 的 pruner 与 context window，消除 subagent
+            # 每轮 prompt 的线性膨胀；default_timeout_seconds 是 wall-clock 兜底。
+            pruner=self._pruner,
+            context_window_tokens=self.context_window_tokens,
+            default_timeout_seconds=subagent_timeout_seconds,
         )
 
         self._running = False

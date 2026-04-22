@@ -118,8 +118,13 @@ class AgentRunner:
             await hook.before_iteration(context)
             llm_start = time.monotonic()
             response = await self._request_model(spec, messages_for_model, hook, context)
-            total_llm_ms += int((time.monotonic() - llm_start) * 1000)
+            llm_elapsed = int((time.monotonic() - llm_start) * 1000)
+            total_llm_ms += llm_elapsed
             raw_usage = self._usage_dict(response.usage)
+            logger.info(
+                "LLM response ← model={} finish_reason={} usage={} elapsed_ms={}",
+                spec.model, response.finish_reason, raw_usage, llm_elapsed,
+            )
             context.response = response
             context.usage = dict(raw_usage)
             context.tool_calls = list(response.tool_calls)
@@ -317,10 +322,15 @@ class AgentRunner:
         hook: AgentHook,
         context: AgentHookContext,
     ):
+        tools = spec.tools.get_definitions()
+        logger.info(
+            "LLM request → model={} messages={} tools={}",
+            spec.model, len(messages), len(tools),
+        )
         kwargs = self._build_request_kwargs(
             spec,
             messages,
-            tools=spec.tools.get_definitions(),
+            tools=tools,
         )
         if hook.wants_streaming():
             async def _stream(delta: str) -> None:
@@ -339,8 +349,17 @@ class AgentRunner:
     ):
         retry_messages = list(messages)
         retry_messages.append(build_finalization_retry_message())
+        logger.info(
+            "LLM finalization retry → model={} messages={}",
+            spec.model, len(retry_messages),
+        )
         kwargs = self._build_request_kwargs(spec, retry_messages, tools=None)
-        return await self.provider.chat_with_retry(**kwargs)
+        response = await self.provider.chat_with_retry(**kwargs)
+        logger.info(
+            "LLM finalization retry ← model={} finish_reason={} usage={}",
+            spec.model, response.finish_reason, self._usage_dict(response.usage),
+        )
+        return response
 
     @staticmethod
     def _usage_dict(usage: dict[str, Any] | None) -> dict[str, int]:

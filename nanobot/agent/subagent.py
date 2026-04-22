@@ -9,6 +9,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
+from nanobot.agent.pruner import ContextPruner
 from nanobot.utils.prompt_templates import render_template
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
@@ -29,12 +30,26 @@ class _SubagentHook(AgentHook):
     def __init__(self, task_id: str) -> None:
         self._task_id = task_id
 
+    async def before_iteration(self, context: AgentHookContext) -> None:
+        logger.info(
+            "Subagent [{}] LLM request → model={} messages={}",
+            self._task_id, context.model, len(context.messages),
+        )
+
+    async def after_iteration(self, context: AgentHookContext) -> None:
+        resp = context.response
+        if resp:
+            logger.info(
+                "Subagent [{}] LLM response ← model={} finish_reason={} usage={}",
+                self._task_id, context.model, resp.finish_reason, context.usage,
+            )
+
     async def before_execute_tools(self, context: AgentHookContext) -> None:
         for tool_call in context.tool_calls:
             args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-            logger.debug(
-                "Subagent [{}] executing: {} with arguments: {}",
-                self._task_id, tool_call.name, args_str,
+            logger.info(
+                "Subagent [{}] tool call: {}({})",
+                self._task_id, tool_call.name, args_str[:200],
             )
 
 
@@ -54,6 +69,10 @@ class SubagentManager:
         extra_hooks: list[AgentHook] | None = None,
         reasoning_effort: str | None = None,
         max_tokens: int | None = None,
+        max_iterations: int = 200,
+        pruner: ContextPruner | None = None,
+        context_window_tokens: int | None = None,
+        default_timeout_seconds: float = 900.0,
     ):
         from nanobot.config.schema import ExecToolConfig
 
@@ -68,6 +87,16 @@ class SubagentManager:
         self._extra_hooks: list[AgentHook] = list(extra_hooks or [])
         self.reasoning_effort = reasoning_effort
         self.max_tokens = max_tokens
+        self.max_iterations = max_iterations
+        # 与主 loop 对齐：共享同一套 context pruning + window 设置，
+        # 让 subagent 每轮 prompt 不随 tool_result 线性膨胀。
+        self._pruner = pruner
+        self._context_window_tokens = context_window_tokens
+        # wall-clock 硬超时：防止单次 LLM 流式响应卡死拖垮整个调度器。
+        # <= 0 表示不限制，内部转为 None 交给 asyncio.wait_for。
+        self._default_timeout_seconds: float | None = (
+            default_timeout_seconds if default_timeout_seconds and default_timeout_seconds > 0 else None
+        )
         self.runner = AgentRunner(provider)
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
@@ -91,14 +120,30 @@ class SubagentManager:
         origin_chat_id: str = "direct",
         session_key: str | None = None,
         log_dir: Path | None = None,
+        timeout_seconds: float | None = None,
     ) -> str:
-        """Spawn a subagent to execute a task in the background."""
+        """Spawn a subagent to execute a task in the background.
+
+        ``timeout_seconds`` overrides the manager's default wall-clock timeout
+        for this single spawn. Pass ``None`` (default) to use
+        ``self._default_timeout_seconds``; pass ``0`` or a negative value to
+        disable the timeout for this spawn (not recommended).
+        """
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
 
+        if timeout_seconds is None:
+            effective_timeout = self._default_timeout_seconds
+        else:
+            effective_timeout = timeout_seconds if timeout_seconds > 0 else None
+
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, log_dir)
+            self._run_subagent(
+                task_id, task, display_label, origin, log_dir,
+                session_key=session_key,
+                timeout_seconds=effective_timeout,
+            )
         )
         self._running_tasks[task_id] = bg_task
         if session_key:
@@ -123,6 +168,45 @@ class SubagentManager:
         label: str,
         origin: dict[str, str],
         log_dir: Path | None = None,
+        session_key: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> None:
+        """Execute the subagent task with an optional wall-clock timeout."""
+        if timeout_seconds is None or timeout_seconds <= 0:
+            await self._run_subagent_inner(
+                task_id, task, label, origin, log_dir, session_key
+            )
+            return
+
+        try:
+            await asyncio.wait_for(
+                self._run_subagent_inner(
+                    task_id, task, label, origin, log_dir, session_key
+                ),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Subagent [{}] exceeded wall-clock timeout {:.0f}s, cancelled",
+                task_id, timeout_seconds,
+            )
+            await self._announce_result(
+                task_id,
+                label,
+                task,
+                f"Subagent timed out after {timeout_seconds:.0f}s (no product delivered).",
+                origin,
+                "timeout",
+            )
+
+    async def _run_subagent_inner(
+        self,
+        task_id: str,
+        task: str,
+        label: str,
+        origin: dict[str, str],
+        log_dir: Path | None = None,
+        session_key: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
@@ -178,7 +262,7 @@ class SubagentManager:
                 initial_messages=messages,
                 tools=tools,
                 model=self.model,
-                max_iterations=15,
+                max_iterations=self.max_iterations,
                 max_tool_result_chars=self.max_tool_result_chars,
                 hook=composed_hook,
                 max_iterations_message="Task completed but no final response was generated.",
@@ -186,6 +270,13 @@ class SubagentManager:
                 fail_on_tool_error=True,
                 reasoning_effort=self.reasoning_effort,
                 max_tokens=self.max_tokens,
+                # Parity with main loop: 并发 tool + 共享 pruner + 共享 context window.
+                # concurrent_tools 由 _partition_tool_batches 按 tool.concurrency_safe 自动分批，
+                # 写类工具（write_file/edit_file/exec）仍在独立 batch 串行，无数据竞争。
+                concurrent_tools=True,
+                pruner=self._pruner,
+                context_window_tokens=self._context_window_tokens,
+                session_key=session_key,
             ))
             if result.stop_reason == "tool_error":
                 await self._announce_result(
@@ -227,7 +318,12 @@ class SubagentManager:
         status: str,
     ) -> None:
         """Announce the subagent result to the main agent via the message bus."""
-        status_text = "completed successfully" if status == "ok" else "failed"
+        if status == "ok":
+            status_text = "completed successfully"
+        elif status == "timeout":
+            status_text = "timed out"
+        else:
+            status_text = "failed"
 
         announce_content = render_template(
             "agent/subagent_announce.md",

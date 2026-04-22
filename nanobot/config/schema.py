@@ -119,6 +119,7 @@ class AgentDefaults(Base):
     subagent_model: str | None = None
     subagent_reasoning_effort: str | None = None  # None → provider 默认行为
     subagent_max_tokens: int | None = None        # None → 继承主 agent max_tokens
+    subagent_timeout_seconds: float = 900.0       # wall-clock 硬超时，0 或负值 = 不限制
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     context_pruning: ContextPruningConfig = Field(default_factory=ContextPruningConfig)
     dream: DreamConfig = Field(default_factory=DreamConfig)
