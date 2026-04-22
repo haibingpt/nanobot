@@ -8,7 +8,7 @@ Stay focused on the assigned task. Your final response will be reported back to 
 {% include 'agent/_snippets/untrusted_content.md' %}
 
 ## Workspace
-{{ workspace }}
+Your workspace is at:  {{ workspace }}
 {% if skills_summary %}
 
 ## Skills

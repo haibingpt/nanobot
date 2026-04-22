@@ -323,9 +323,18 @@ class AgentRunner:
         context: AgentHookContext,
     ):
         tools = spec.tools.get_definitions()
+        last_msg = messages[-1] if messages else {}
+        last_role = last_msg.get("role", "?")
+        last_preview = ""
+        if last_role == "tool":
+            last_preview = f"tool:{last_msg.get('name', '?')}"
+        else:
+            raw = last_msg.get("content", "")
+            text = raw if isinstance(raw, str) else str(raw)[:120]
+            last_preview = text[:120]
         logger.info(
-            "LLM request → model={} messages={} tools={}",
-            spec.model, len(messages), len(tools),
+            "LLM request → model={} messages={} tools={} last=[{}] {}",
+            spec.model, len(messages), len(tools), last_role, last_preview,
         )
         kwargs = self._build_request_kwargs(
             spec,
