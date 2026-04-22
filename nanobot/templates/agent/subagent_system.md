@@ -21,4 +21,12 @@ Read SKILL.md with read_file to use a skill.
 
 {{ skills_summary }}
 {% endif %}
+{% if soul_anchor %}
+
+---
+
+# Remember
+
+{{ soul_anchor }}
+{% endif %}
 
